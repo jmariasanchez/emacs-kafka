@@ -312,7 +312,18 @@ impl State {
 
     async fn consume_start(self: &Arc<Self>, r: p::ConsumeStartParams) -> R {
         let c = self.cluster(&r.connection_id).await?;
-        let sub_id = format!("sub-{}", self.next_sub.fetch_add(1, Ordering::Relaxed));
+        let sub_id = match &r.subscription_id {
+            Some(s) if s.is_empty() => {
+                return Err(RpcError::new(codes::INVALID_PARAMS, "subscriptionId must not be empty"))
+            }
+            Some(s) => {
+                if self.subs.lock().await.contains_key(s) {
+                    return Err(RpcError::new(codes::INVALID_PARAMS, format!("subscription {s} already exists")));
+                }
+                s.clone()
+            }
+            None => format!("sub-{}", self.next_sub.fetch_add(1, Ordering::Relaxed)),
+        };
         let credit = Arc::new(Semaphore::new(r.initial_credit.min(MAX_CREDIT) as usize));
         let cancel = Arc::new(AtomicBool::new(false));
         // Small channel: the stream thread blocks here when Emacs is slow.

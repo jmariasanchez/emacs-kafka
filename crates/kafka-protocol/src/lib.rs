@@ -316,6 +316,10 @@ fn default_fetch_limit() -> usize {
 #[serde(rename_all = "camelCase")]
 pub struct ConsumeStartParams {
     pub connection_id: String,
+    /// Optional client-chosen id, so the client can register a handler before
+    /// the first notification can possibly arrive. Must be unique.
+    #[serde(default)]
+    pub subscription_id: Option<String>,
     pub topic: String,
     #[serde(default)]
     pub partitions: Option<Vec<i32>>,
