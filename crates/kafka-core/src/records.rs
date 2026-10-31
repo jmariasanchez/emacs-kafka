@@ -231,17 +231,15 @@ impl Cluster {
     }
 
     /// Start a live stream. Batches are delivered on `sink`; one permit from
-    /// `credit` is consumed per batch, providing back-pressure from the UI.
+    /// `ctl.credit` is consumed per batch, providing back-pressure from the UI.
     pub async fn stream(
         self: &Arc<Self>,
         topic: String,
         parts: Option<Vec<i32>>,
         pos: Position,
-        batch_size: usize,
-        credit: Arc<Semaphore>,
-        cancel: Arc<AtomicBool>,
-        sink: mpsc::Sender<StreamEvent>,
+        ctl: StreamControl,
     ) -> Result<()> {
+        let StreamControl { batch_size, credit, cancel, sink } = ctl;
         let parts = self.resolve_parts(&topic, parts).await?;
         let cfg = self.config.clone();
         let c = cfg.inspection_consumer()?;
@@ -270,6 +268,16 @@ pub struct FetchResult {
     /// More records were available than `limit`.
     pub truncated: bool,
     pub timed_out: bool,
+}
+
+/// Flow-control handles for a live stream.
+pub struct StreamControl {
+    pub batch_size: usize,
+    /// One permit per batch the consumer is allowed to emit.
+    pub credit: Arc<Semaphore>,
+    /// Set to stop the stream thread.
+    pub cancel: Arc<AtomicBool>,
+    pub sink: mpsc::Sender<StreamEvent>,
 }
 
 #[derive(Debug)]

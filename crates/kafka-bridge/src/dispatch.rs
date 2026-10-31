@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use kafka_core::capabilities::CAPABILITIES;
-use kafka_core::records::{ProduceRequest, StreamEvent};
+use kafka_core::records::{ProduceRequest, StreamControl, StreamEvent};
 use kafka_core::{Cluster, ConnectionConfig};
 use kafka_protocol::{self as p, codes, methods as m, RpcError};
 use serde::de::DeserializeOwned;
@@ -332,10 +332,7 @@ impl State {
             r.topic.clone(),
             r.partitions,
             position(&r.start_position),
-            r.batch_size,
-            credit.clone(),
-            cancel.clone(),
-            tx,
+            StreamControl { batch_size: r.batch_size, credit: credit.clone(), cancel: cancel.clone(), sink: tx },
         )
         .await
         .map_err(core_err)?;

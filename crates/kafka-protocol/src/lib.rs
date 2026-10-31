@@ -276,21 +276,16 @@ pub struct ProduceParams {
     pub timestamp: Option<i64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum StartPosition {
     Earliest,
+    #[default]
     Latest,
     Offset { offset: i64 },
     Timestamp { timestamp: i64 },
     /// N records before the end of each partition.
     Tail { count: i64 },
-}
-
-impl Default for StartPosition {
-    fn default() -> Self {
-        StartPosition::Latest
-    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
