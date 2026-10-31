@@ -1,0 +1,10 @@
+[package]
+name = "kafka-protocol"
+description = "Typed JSON-RPC messages exchanged between kafka.el and kafka-bridge"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
