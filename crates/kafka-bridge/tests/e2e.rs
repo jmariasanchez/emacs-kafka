@@ -300,6 +300,51 @@ fn full_workflow() {
 }
 
 #[test]
+fn stdin_close_mid_stream_exits_and_leaks_nothing() {
+    let Some(bs) = bootstrap() else { return };
+    let mut b = Bridge::spawn();
+    b.ok("kafka/connect", json!({"connectionId":"c","bootstrapServers":bs}));
+    let topic = uniq("kel-leak");
+    b.ok("kafka/topic/create", json!({"connectionId":"c","topic":topic,"partitions":2,"replicationFactor":1}));
+    for i in 0..20 {
+        b.ok("kafka/produce", json!({"connectionId":"c","topic":topic,"key":"k","value":i.to_string()}));
+    }
+    // Three concurrent streams, one deliberately starved of credit.
+    for credit in [0, 1, 4] {
+        b.ok("kafka/consume/start", json!({"connectionId":"c","topic":topic,
+            "startPosition":{"type":"earliest"},"batchSize":3,"initialCredit":credit}));
+    }
+    b.wait_for(|v| v["method"] == "kafka/consume/records", 20);
+    // Emacs dies: stdin closes without a shutdown request.
+    drop(std::mem::replace(&mut b.stdin, {
+        // Replace with a dummy pipe we immediately drop, closing the real stdin.
+        let mut tmp = Command::new("true").stdin(Stdio::piped()).spawn().unwrap();
+        let s = tmp.stdin.take().unwrap();
+        let _ = tmp.wait();
+        s
+    }));
+    let start = Instant::now();
+    let status = loop {
+        if let Some(s) = b.child.try_wait().unwrap() {
+            break s;
+        }
+        assert!(start.elapsed() < Duration::from_secs(10), "bridge kept running after stdin closed");
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert!(status.success(), "exit status {status:?}");
+    // No inspection consumer survives as a group member on the broker.
+    let mut b2 = Bridge::spawn();
+    b2.ok("kafka/connect", json!({"connectionId":"c","bootstrapServers":bs}));
+    std::thread::sleep(Duration::from_secs(1));
+    for g in b2.ok("kafka/groups/list", json!({"connectionId":"c"})).as_array().unwrap() {
+        if g["groupId"].as_str().unwrap().starts_with("kafka.el-inspect") {
+            assert_eq!(g["members"], 0, "leaked member: {g}");
+        }
+    }
+    b2.ok("kafka/topic/delete", json!({"connectionId":"c","topic":topic,"confirmName":topic}));
+}
+
+#[test]
 fn group_lag_is_reported() {
     let Some(bs) = bootstrap() else { return };
     let kafka_home = std::env::var("KAFKA_EL_TEST_KAFKA_HOME").ok();

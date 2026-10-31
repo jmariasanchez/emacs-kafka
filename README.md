@@ -58,8 +58,8 @@ scripts/kafka-dev.sh start     # local single-node KRaft broker on :19092 (needs
 scripts/test-all.sh            # cargo tests + e2e + ERT against that broker
 ```
 
-Docs: [ARCHITECTURE](docs/ARCHITECTURE.md) · [RPC](docs/RPC.md) ·
-[PARITY](docs/PARITY.md) · [ROADMAP](docs/ROADMAP.md) · [SECURITY](SECURITY.md)
+Docs: [VISION](docs/VISION.md) · [SCOPE](docs/SCOPE.md) · [ARCHITECTURE](docs/ARCHITECTURE.md) · [RPC](docs/RPC.md) ·
+[PARITY](docs/PARITY.md) · [ROADMAP](docs/ROADMAP.md) · [COMPATIBILITY](docs/COMPATIBILITY.md) · [TESTING](docs/TESTING.md) · [SECURITY](SECURITY.md)
 
 ## License
 
