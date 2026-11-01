@@ -28,6 +28,8 @@ Emacs 31.1 and 30.2. All changes are on `lane/security-resilience`.
 - `scripts/kafka-cluster.sh`: fix `local i=$1 d="$RUN/n$i"` evaluating `i`
   before assignment under `set -u`. This broke standalone kill/start-node.
   Add validated `pause N`/`resume N` controls for SIGSTOP/SIGCONT.
+  If graceful shutdown exceeds 30 seconds, force termination rather than
+  deleting the PID file and incorrectly reporting a still-listening node stopped.
 - `scripts/kafka-secure.sh`: optional `KAFKA_SECURE_MECHANISMS`, default unchanged,
   for a separate PLAIN-only broker used to test broker-side SCRAM rejection.
 - New owned suites: `tests/security.rs`, `tests/resilience.rs`, `tests/load.rs`
