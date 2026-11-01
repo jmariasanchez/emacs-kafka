@@ -155,3 +155,36 @@ Expanded file tests caught the need for an explicit empty JSON object when a
 record envelope contains only null fields. All three were fixed and the full
 suites rerun. Existing jsonrpc shutdown sentinel warnings still appear during
 integration tests, but there are no failed or skipped final ERT cases.
+
+## Post-review transaction hardening
+
+`Transaction::produce` now wraps the complete delivery future in
+`tokio::time::timeout` using the profile timeout, rather than treating
+FutureProducer's queue-admission timeout as a total deadline. Expiry maps to
+`KafkaError::MessageProduction(MessageTimedOut)`, matching the security lane's
+normal producer behavior and preserving the Kafka error code on the wire.
+As with ordinary produce, a timeout does not retract a record already sent.
+Callers should abort a transaction after an uncertain delivery outcome.
+
+`Drop` moves the entire producer handle to a named background OS thread for
+both abort and destruction. Moving only a clone would still allow the last
+native producer destructor to block an async worker. The destructor schedules
+best-effort cleanup, it does not wait for completion. Explicit `finish(false)`
+and the lifecycle `abort_all` hook still await an abort. Abrupt process exit
+can terminate background cleanup, leaving the broker timeout as fallback.
+
+The new core test `delivery_deadline_bounds_an_unresponsive_endpoint` uses a
+real TCP listener that never answers Kafka requests and a 60-second native
+delivery timeout. The wrapper must return `MessageTimedOut` within one second
+with a 50 ms profile deadline. It bypasses transaction initialization only to
+isolate the delivery deadline, and does not pause any shared broker.
+
+The real-broker abort-on-drop test now checks prompt return from drop and
+publishes a later nontransactional sentinel. Committed readers must see only
+that sentinel, proving the background abort advanced the last stable offset,
+not merely that an open transaction is temporarily invisible.
+
+Follow-up validation: full `cargo test --workspace` with broker and CLI oracle
+environment passed **30 tests**. Strict workspace/all-target Clippy passed.
+The lane's 8 ERT tests also passed on both Emacs 31.1 and 30.2 against the
+hardened bridge, including transactional file producing.

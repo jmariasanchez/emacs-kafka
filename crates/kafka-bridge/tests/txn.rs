@@ -280,20 +280,35 @@ async fn unfinished_core_transaction_aborts_on_drop() {
         })
         .await
         .unwrap();
+    let dropped = std::time::Instant::now();
     drop(transaction);
-    assert_eq!(
-        fetch(&mut bridge, &topic, "read_committed")
-            .as_array()
-            .unwrap()
-            .len(),
-        0
+    assert!(dropped.elapsed() < std::time::Duration::from_millis(250));
+    bridge.ok(
+        "kafka/produce",
+        json!({"connectionId":"rw", "topic":topic, "partition":0, "value":"after-drop"}),
     );
+    // A later committed record remains hidden until the earlier transaction
+    // is actually aborted. Seeing it proves cleanup, not just invisibility.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    loop {
+        let records = fetch(&mut bridge, &topic, "read_committed");
+        if !records.as_array().unwrap().is_empty() {
+            assert_eq!(records.as_array().unwrap().len(), 1);
+            assert_eq!(records[0]["value"]["data"], "after-drop");
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "background abort did not release the last stable offset"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
     assert_eq!(
         fetch(&mut bridge, &topic, "read_uncommitted")
             .as_array()
             .unwrap()
             .len(),
-        1
+        2
     );
     cleanup(&mut bridge, &topic);
 }
