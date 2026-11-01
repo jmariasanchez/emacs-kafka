@@ -13,12 +13,14 @@
 
 (require 'kafka-rpc)
 (require 'tabulated-list)
+(require 'kafka-acls)
 
 (defvar kafka-connection)
 (declare-function kafka-ensure-connected "kafka")
 (declare-function kafka-read-connection "kafka")
 (declare-function kafka-header-line "kafka")
 (declare-function kafka-confirm-exact "kafka")
+(declare-function kafka-confirm-write "kafka")
 (declare-function kafka-records "kafka-records")
 
 (defcustom kafka-groups-hide-inspection t
@@ -29,6 +31,8 @@
   :parent tabulated-list-mode-map
   "RET" #'kafka-groups-describe
   "D" #'kafka-groups-delete
+  "R" #'kafka-group-reset-offsets
+  "m" #'kafka-group-members
   "g" #'revert-buffer)
 
 (define-derived-mode kafka-groups-mode tabulated-list-mode "Kafka Groups"
@@ -88,6 +92,8 @@
 (defvar-keymap kafka-group-mode-map
   :parent tabulated-list-mode-map
   "RET" #'kafka-group-records-at-committed
+  "R" #'kafka-group-reset-offsets
+  "m" #'kafka-group-members
   "g" #'revert-buffer)
 
 (define-derived-mode kafka-group-mode tabulated-list-mode "Kafka Group"
@@ -145,6 +151,83 @@ This reads independently and does not affect the group."
   (let ((o (or (tabulated-list-get-id) (user-error "No partition here"))))
     (kafka-records kafka-connection (plist-get o :topic) (list (plist-get o :partition))
                    (list :type "offset" :offset (or (plist-get o :committed) 0)))))
+
+(defun kafka-group--selected-id ()
+  "Return the group id in the current group view, or prompt."
+  (or kafka-group--id
+      (and (derived-mode-p 'kafka-groups-mode) (tabulated-list-get-id))
+      (read-string "Group: ")))
+
+(defun kafka-group-members (name)
+  "Show members, assignments and coordinator on connection NAME."
+  (interactive (list (kafka-read-connection)))
+  (let ((group (kafka-group--selected-id)))
+    (kafka-ensure-connected name)
+    (kafka-admin--show name (format "Members %s" group)
+                       (kafka-rpc-request :kafka/group/members (list :connectionId name :groupId group)))))
+
+(defvar-local kafka-group-reset--params nil)
+(defvar-keymap kafka-group-reset-mode-map
+  :parent tabulated-list-mode-map
+  "C-c C-c" #'kafka-group-reset-apply)
+(define-derived-mode kafka-group-reset-mode tabulated-list-mode "Kafka Reset Preview"
+  "Preview offsets before resetting.  C-c C-c asks for the exact group id."
+  (setq tabulated-list-format [("Topic" 40 t) ("P" 5 t) ("Current" 15 t) ("New offset" 15 t)])
+  (tabulated-list-init-header))
+
+(defun kafka-group-reset--selection (input)
+  "Parse INPUT as topic or topic:partition,partition."
+  (let* ((parts (split-string input ":"))
+         (topic (car parts))
+         (ids (and (cadr parts) (split-string (cadr parts) ","))))
+    (unless (and (not (string-empty-p topic)) (<= (length parts) 2)
+                 (or (not ids) (seq-every-p (lambda (s) (string-match-p "\\`[0-9]+\\'" s)) ids)))
+      (user-error "Use topic or topic:0,1"))
+    (if ids (list :topic topic :partitions (vconcat (mapcar #'string-to-number ids)))
+      (list :topic topic))))
+
+;;;###autoload
+(defun kafka-group-reset-offsets (name)
+  "Preview a reset of an inactive group's offsets on NAME.
+No write is made until C-c C-c in the preview and an exact group confirmation."
+  (interactive (list (kafka-read-connection)))
+  (kafka-ensure-connected name)
+  (kafka-confirm-write name "prepare an offset reset")
+  (let* ((group (kafka-group--selected-id))
+         (selection (kafka-group-reset--selection (read-string "Topic or topic:0,1: ")))
+         (kind (completing-read "Reset: " '("to-earliest" "to-latest" "to-offset" "to-datetime" "shift-by") nil t))
+         (spec (append (list :type kind)
+                       (cond ((member kind '("to-offset" "shift-by")) (list :offset (read-number "Offset / shift: ")))
+                             ((equal kind "to-datetime") (list :timestamp (read-number "Timestamp (epoch ms): "))))))
+         (params (list :connectionId name :groupId group :topics (vector selection) :spec spec :dryRun t))
+         (preview (kafka-rpc-request :kafka/group/resetOffsets params)))
+    (with-current-buffer (get-buffer-create (format "*Kafka Reset: %s/%s*" name group))
+      (kafka-group-reset-mode)
+      (setq kafka-connection name kafka-group-reset--params params)
+      (setq header-line-format (kafka-header-line name group "PREVIEW ONLY | C-c C-c to confirm | stop consumers before applying"))
+      (setq tabulated-list-entries
+            (mapcar (lambda (o)
+                      (list o (vector (plist-get o :topic) (number-to-string (plist-get o :partition))
+                                      (format "%s" (or (plist-get o :currentCommitted) "-"))
+                                      (number-to-string (plist-get o :newOffset)))))
+                    (plist-get preview :offsets)))
+      (tabulated-list-print t)
+      (pop-to-buffer (current-buffer)))))
+
+(defun kafka-group-reset-apply ()
+  "Confirm and apply the reset shown in this preview buffer."
+  (interactive)
+  (unless kafka-group-reset--params (user-error "No pending reset"))
+  (let* ((params (copy-tree kafka-group-reset--params))
+         (group (plist-get params :groupId))
+         (confirm (kafka-confirm-exact kafka-connection
+                                       (format "RESET offsets for %s (offsets are recalculated at execution)" group) group)))
+    (setq params (plist-put params :dryRun :json-false))
+    (setq params (plist-put params :confirmName confirm))
+    (kafka-rpc-request :kafka/group/resetOffsets params)
+    (setq kafka-group-reset--params nil)
+    (setq header-line-format (kafka-header-line kafka-connection group "RESET APPLIED"))
+    (message "Reset offsets for %s" group)))
 
 (provide 'kafka-groups)
 ;;; kafka-groups.el ends here

@@ -179,6 +179,7 @@ version = "0.1.0"
 dependencies = [
  "futures",
  "rdkafka",
+ "rdkafka-sys",
  "serde",
  "serde_json",
  "thiserror",
