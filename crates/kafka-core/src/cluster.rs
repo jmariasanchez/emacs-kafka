@@ -8,8 +8,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use rdkafka::admin::{
-    AdminClient, AdminOptions, AlterConfig, ConfigSource, NewPartitions, NewTopic,
-    ResourceSpecifier, TopicReplication,
+    AdminClient, AdminOptions, ConfigSource, NewPartitions, NewTopic, ResourceSpecifier,
+    TopicReplication,
 };
 use rdkafka::client::DefaultClientContext;
 use rdkafka::consumer::{BaseConsumer, Consumer};
@@ -18,7 +18,7 @@ use rdkafka::{Offset, TopicPartitionList};
 use serde::Serialize;
 
 use crate::connection::{is_secret_key, ConnectionConfig};
-use crate::errors::{check_all, CoreError, Result, ResourceResult};
+use crate::errors::{check_all, CoreError, ResourceResult, Result};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -166,12 +166,21 @@ impl Cluster {
             config.verify().await?;
             let admin = config.admin()?;
             let meta = Arc::new(config.inspection_consumer()?);
-            let c = Arc::new(Self { config, admin, meta, producer: tokio::sync::OnceCell::new() });
+            let c = Arc::new(Self {
+                config,
+                admin,
+                meta,
+                producer: tokio::sync::OnceCell::new(),
+            });
             let info = c.describe_cluster().await?;
             Ok((c, info))
-        }).await.map_err(|_| CoreError::Kafka(rdkafka::error::KafkaError::MetadataFetch(
-            rdkafka::error::RDKafkaErrorCode::OperationTimedOut,
-        )))?
+        })
+        .await
+        .map_err(|_| {
+            CoreError::Kafka(rdkafka::error::KafkaError::MetadataFetch(
+                rdkafka::error::RDKafkaErrorCode::OperationTimedOut,
+            ))
+        })?
     }
 
     pub fn timeout(&self) -> Duration {
@@ -225,7 +234,11 @@ impl Cluster {
                 brokers: md
                     .brokers()
                     .iter()
-                    .map(|b| BrokerInfo { id: b.id(), host: b.host().into(), port: b.port() })
+                    .map(|b| BrokerInfo {
+                        id: b.id(),
+                        host: b.host().into(),
+                        port: b.port(),
+                    })
                     .collect(),
                 topic_count: md.topics().len(),
             })
@@ -245,7 +258,11 @@ impl Cluster {
                 .topics()
                 .iter()
                 .filter(|tp| include_internal || !tp.name().starts_with("__"))
-                .filter(|tp| needle.as_ref().is_none_or(|n| tp.name().to_lowercase().contains(n)))
+                .filter(|tp| {
+                    needle
+                        .as_ref()
+                        .is_none_or(|n| tp.name().to_lowercase().contains(n))
+                })
                 .map(|tp| {
                     let parts = tp.partitions();
                     TopicSummary {
@@ -276,7 +293,9 @@ impl Cluster {
                 .find(|x| x.name() == topic)
                 .ok_or_else(|| CoreError::NotFound(topic.clone()))?;
             if let Some(e) = tp.error() {
-                return Err(CoreError::Kafka(rdkafka::error::KafkaError::MetadataFetch(e.into())));
+                return Err(CoreError::Kafka(rdkafka::error::KafkaError::MetadataFetch(
+                    e.into(),
+                )));
             }
             let mut parts = Vec::new();
             let mut total = 0;
@@ -294,7 +313,11 @@ impl Cluster {
                 });
             }
             parts.sort_by_key(|p| p.id);
-            Ok(TopicDetail { name: topic, partitions: parts, total_messages: total })
+            Ok(TopicDetail {
+                name: topic,
+                partitions: parts,
+                total_messages: total,
+            })
         })
         .await
     }
@@ -309,7 +332,9 @@ impl Cluster {
                 .find(|x| x.name() == topic)
                 .ok_or_else(|| CoreError::NotFound(topic.clone()))?;
             if let Some(e) = tp.error() {
-                return Err(CoreError::Kafka(rdkafka::error::KafkaError::MetadataFetch(e.into())));
+                return Err(CoreError::Kafka(rdkafka::error::KafkaError::MetadataFetch(
+                    e.into(),
+                )));
             }
             let mut ids: Vec<i32> = tp.partitions().iter().map(|p| p.id()).collect();
             ids.sort();
@@ -319,11 +344,15 @@ impl Cluster {
     }
 
     pub async fn watermarks(&self, topic: String, partition: i32) -> Result<(i64, i64)> {
-        self.blocking(move |m, t| Ok(m.fetch_watermarks(&topic, partition, t)?)).await
+        self.blocking(move |m, t| Ok(m.fetch_watermarks(&topic, partition, t)?))
+            .await
     }
 
     async fn describe_configs(&self, spec: ResourceSpecifier<'_>) -> Result<Vec<ConfigEntryInfo>> {
-        let res = self.admin.describe_configs([&spec], &self.admin_opts(false)).await?;
+        let res = self
+            .admin
+            .describe_configs([&spec], &self.admin_opts(false))
+            .await?;
         let r = res
             .into_iter()
             .next()
@@ -334,7 +363,11 @@ impl Cluster {
             .iter()
             .map(|e| ConfigEntryInfo {
                 name: e.name.clone(),
-                value: if e.is_sensitive || is_secret_key(&e.name) { None } else { e.value.clone() },
+                value: if e.is_sensitive || is_secret_key(&e.name) {
+                    None
+                } else {
+                    e.value.clone()
+                },
                 source: source_name(&e.source).into(),
                 read_only: e.is_read_only,
                 default: e.is_default,
@@ -350,7 +383,8 @@ impl Cluster {
     }
 
     pub async fn broker_configs(&self, broker: i32) -> Result<Vec<ConfigEntryInfo>> {
-        self.describe_configs(ResourceSpecifier::Broker(broker)).await
+        self.describe_configs(ResourceSpecifier::Broker(broker))
+            .await
     }
 
     pub async fn create_topic(
@@ -363,13 +397,18 @@ impl Cluster {
     ) -> Result<Vec<ResourceResult>> {
         self.guard_write()?;
         if name.is_empty() || partitions < 1 || replication < 1 {
-            return Err(CoreError::Invalid("name, partitions>=1, replication>=1 required".into()));
+            return Err(CoreError::Invalid(
+                "name, partitions>=1, replication>=1 required".into(),
+            ));
         }
         let mut nt = NewTopic::new(name, partitions, TopicReplication::Fixed(replication));
         for (k, v) in configs {
             nt = nt.set(k, v);
         }
-        let res = self.admin.create_topics([&nt], &self.admin_opts(validate_only)).await?;
+        let res = self
+            .admin
+            .create_topics([&nt], &self.admin_opts(validate_only))
+            .await?;
         check_all(
             res.into_iter()
                 .map(|r| match r {
@@ -383,9 +422,14 @@ impl Cluster {
     pub async fn delete_topic(&self, name: &str, confirm: &str) -> Result<Vec<ResourceResult>> {
         self.guard_write()?;
         if name != confirm {
-            return Err(CoreError::Confirmation { expected: name.into() });
+            return Err(CoreError::Confirmation {
+                expected: name.into(),
+            });
         }
-        let res = self.admin.delete_topics(&[name], &self.admin_opts(false)).await?;
+        let res = self
+            .admin
+            .delete_topics(&[name], &self.admin_opts(false))
+            .await?;
         check_all(
             res.into_iter()
                 .map(|r| match r {
@@ -396,42 +440,38 @@ impl Cluster {
         )
     }
 
-    /// Returns `(previous, proposed)` entries so callers can show a diff, then
-    /// applies the change unless `validate_only`.
-    ///
-    /// Note: the classic AlterConfigs API replaces the full set of dynamic
-    /// configs, so we merge existing dynamic topic overrides first.
+    /// Preview the current values, then apply only the requested overrides via
+    /// IncrementalAlterConfigs. Concurrent writers' unrelated overrides are safe.
     pub async fn alter_topic_config(
-        &self,
+        self: &Arc<Self>,
         topic: &str,
         changes: &BTreeMap<String, String>,
         validate_only: bool,
     ) -> Result<serde_json::Value> {
         self.guard_write()?;
         let current = self.topic_configs(topic).await?;
-        let mut merged: BTreeMap<String, String> = current
-            .iter()
-            .filter(|e| e.source == "dynamic-topic")
-            .filter_map(|e| e.value.clone().map(|v| (e.name.clone(), v)))
-            .collect();
         let previous: BTreeMap<String, Option<String>> = changes
             .keys()
-            .map(|k| (k.clone(), current.iter().find(|e| &e.name == k).and_then(|e| e.value.clone())))
+            .map(|k| {
+                (
+                    k.clone(),
+                    current
+                        .iter()
+                        .find(|e| &e.name == k)
+                        .and_then(|e| e.value.clone()),
+                )
+            })
             .collect();
-        if current.iter().any(|e| e.source == "dynamic-topic" && e.sensitive) {
-            return Err(CoreError::Invalid(
-                "topic has sensitive dynamic configs that cannot be safely re-applied".into(),
-            ));
-        }
-        merged.extend(changes.clone());
-        let mut ac = AlterConfig::new(ResourceSpecifier::Topic(topic));
-        for (k, v) in &merged {
-            ac = ac.set(k, v);
-        }
-        let res = self.admin.alter_configs([&ac], &self.admin_opts(validate_only)).await?;
-        for r in res {
-            r.map_err(|(_, e)| CoreError::Kafka(rdkafka::error::KafkaError::AdminOp(e)))?;
-        }
+        let operations = changes
+            .iter()
+            .map(|(name, value)| crate::ffi::ConfigChange {
+                name: name.clone(),
+                operation: "set".into(),
+                value: Some(value.clone()),
+            })
+            .collect();
+        self.incremental_alter("topic".into(), topic.into(), operations, validate_only)
+            .await?;
         Ok(serde_json::json!({
             "topic": topic, "validateOnly": validate_only,
             "previous": previous, "applied": changes,
@@ -452,7 +492,10 @@ impl Cluster {
             )));
         }
         let np = NewPartitions::new(topic, total);
-        let res = self.admin.create_partitions([&np], &self.admin_opts(validate_only)).await?;
+        let res = self
+            .admin
+            .create_partitions([&np], &self.admin_opts(validate_only))
+            .await?;
         check_all(
             res.into_iter()
                 .map(|r| match r {
@@ -473,7 +516,10 @@ impl Cluster {
             let r = m.offsets_for_times(tpl, t)?;
             Ok(r.elements()
                 .iter()
-                .map(|e| PartitionOffset { partition: e.partition(), offset: offset_value(e.offset()) })
+                .map(|e| PartitionOffset {
+                    partition: e.partition(),
+                    offset: offset_value(e.offset()),
+                })
                 .collect())
         })
         .await
@@ -502,8 +548,11 @@ impl Cluster {
     /// Describe a group and compute lag for every partition of every topic
     /// the group has committed offsets for. Read-only: the reader consumer is
     /// never subscribed, so it does not join or rebalance the group.
-    pub async fn describe_group(&self, group: String) -> Result<GroupDetail> {
-        let cfg = self.config.clone();
+    pub async fn describe_group(self: &Arc<Self>, group: String) -> Result<GroupDetail> {
+        // One OffsetFetch for this group, not one metadata scan across all topics.
+        let committed = self.group_offsets(group.clone()).await?;
+        let committed: Vec<serde_json::Value> =
+            serde_json::from_value(committed).map_err(|e| CoreError::Internal(e.to_string()))?;
         self.blocking(move |m, t| {
             let gl = m.fetch_group_list(Some(&group), t)?;
             let g = gl
@@ -528,34 +577,37 @@ impl Cluster {
                 })
                 .collect();
 
-            // OffsetFetch for every partition of every non-internal topic.
-            // There is no ListConsumerGroupOffsets in rust-rdkafka 0.39 (see PARITY.md).
-            let md = m.fetch_metadata(None, t)?;
-            let mut tpl = TopicPartitionList::new();
-            for tp in md.topics().iter().filter(|tp| !tp.name().starts_with("__")) {
-                for p in tp.partitions() {
-                    tpl.add_partition(tp.name(), p.id());
-                }
-            }
-            let reader = cfg.group_offset_reader(&group)?;
-            let committed = reader.committed_offsets(tpl, t)?;
             let mut offsets = Vec::new();
             let mut total = 0;
-            for e in committed.elements() {
-                let Some(c) = offset_value(e.offset()) else { continue };
-                let (_, high) = m.fetch_watermarks(e.topic(), e.partition(), t)?;
+            for e in committed {
+                let Some(c) = e["committed"].as_i64() else {
+                    continue;
+                };
+                let topic = e["topic"]
+                    .as_str()
+                    .ok_or_else(|| CoreError::Internal("missing offset topic".into()))?;
+                let partition = e["partition"]
+                    .as_i64()
+                    .ok_or_else(|| CoreError::Internal("missing offset partition".into()))?
+                    as i32;
+                let (_, high) = m.fetch_watermarks(topic, partition, t)?;
                 let lag = compute_lag(Some(c), high);
                 total += lag.unwrap_or(0);
                 offsets.push(GroupOffset {
-                    topic: e.topic().into(),
-                    partition: e.partition(),
+                    topic: topic.into(),
+                    partition,
                     committed: Some(c),
                     high,
                     lag,
                 });
             }
             offsets.sort_by(|a, b| (&a.topic, a.partition).cmp(&(&b.topic, b.partition)));
-            Ok(GroupDetail { summary, members_detail, offsets, total_lag: total })
+            Ok(GroupDetail {
+                summary,
+                members_detail,
+                offsets,
+                total_lag: total,
+            })
         })
         .await
     }
@@ -563,9 +615,14 @@ impl Cluster {
     pub async fn delete_group(&self, group: &str, confirm: &str) -> Result<Vec<ResourceResult>> {
         self.guard_write()?;
         if group != confirm {
-            return Err(CoreError::Confirmation { expected: group.into() });
+            return Err(CoreError::Confirmation {
+                expected: group.into(),
+            });
         }
-        let res = self.admin.delete_groups(&[group], &self.admin_opts(false)).await?;
+        let res = self
+            .admin
+            .delete_groups(&[group], &self.admin_opts(false))
+            .await?;
         check_all(
             res.into_iter()
                 .map(|r| match r {
@@ -578,7 +635,9 @@ impl Cluster {
 
     pub async fn producer(&self) -> Result<&FutureProducer> {
         self.guard_write()?;
-        self.producer.get_or_try_init(|| async { self.config.producer() }).await
+        self.producer
+            .get_or_try_init(|| async { self.config.producer() })
+            .await
     }
 }
 
@@ -605,8 +664,16 @@ mod tests {
         };
         let admin = cfg.admin().unwrap();
         let meta = Arc::new(cfg.inspection_consumer().unwrap());
-        let c = Cluster { config: cfg, admin, meta, producer: tokio::sync::OnceCell::new() };
-        assert!(matches!(c.delete_topic("x", "x").await, Err(CoreError::ReadOnly)));
+        let c = Cluster {
+            config: cfg,
+            admin,
+            meta,
+            producer: tokio::sync::OnceCell::new(),
+        };
+        assert!(matches!(
+            c.delete_topic("x", "x").await,
+            Err(CoreError::ReadOnly)
+        ));
         assert!(matches!(c.producer().await, Err(CoreError::ReadOnly)));
     }
 }

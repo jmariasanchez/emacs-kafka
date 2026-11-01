@@ -9,10 +9,13 @@ use serde_json::{json, Value};
 
 pub fn core_err(e: CoreError) -> RpcError {
     match e {
-        CoreError::Security { code, message } => RpcError::new(codes::KAFKA, message)
-            .with_data(json!({"kafkaCode": code})),
+        CoreError::Security { code, message } => {
+            RpcError::new(codes::KAFKA, message).with_data(json!({"kafkaCode": code}))
+        }
         CoreError::ReadOnly => RpcError::new(codes::READ_ONLY, e.to_string()),
-        CoreError::Confirmation { .. } => RpcError::new(codes::CONFIRMATION_REQUIRED, e.to_string()),
+        CoreError::Confirmation { .. } => {
+            RpcError::new(codes::CONFIRMATION_REQUIRED, e.to_string())
+        }
         CoreError::Invalid(_) => RpcError::new(codes::INVALID_PARAMS, e.to_string()),
         CoreError::NotFound(_) => RpcError::new(codes::KAFKA, e.to_string()),
         CoreError::Timeout(_) => RpcError::new(codes::TIMEOUT, e.to_string()),
@@ -21,7 +24,12 @@ pub fn core_err(e: CoreError) -> RpcError {
             RpcError::new(codes::PARTIAL_FAILURE, e.to_string()).with_data(data)
         }
         CoreError::Kafka(ref k) => {
-            let data = json!({ "kafkaCode": k.rdkafka_error_code().map(|c| format!("{c:?}")) });
+            // rust-rdkafka 0.39 omits AdminOp in rdkafka_error_code().
+            let code = match k {
+                rdkafka::error::KafkaError::AdminOp(code) => Some(*code),
+                _ => k.rdkafka_error_code(),
+            };
+            let data = json!({ "kafkaCode": code.map(|c| format!("{c:?}")) });
             RpcError::new(codes::KAFKA, e.to_string()).with_data(data)
         }
         CoreError::Internal(_) => RpcError::new(codes::INTERNAL, e.to_string()),
@@ -81,10 +89,21 @@ mod tests {
 
     #[test]
     fn security_errors_preserve_actionable_code() {
-        let e = core_err(CoreError::Security { code: "SSL", message: "certificate expired: renew it" });
+        let e = core_err(CoreError::Security {
+            code: "SSL",
+            message: "certificate expired: renew it",
+        });
         assert_eq!(e.code, codes::KAFKA);
         assert_eq!(e.data.unwrap()["kafkaCode"], "SSL");
         assert!(e.message.contains("certificate expired"));
+    }
+
+    #[test]
+    fn admin_errors_preserve_broker_code() {
+        let e = core_err(CoreError::Kafka(rdkafka::error::KafkaError::AdminOp(
+            rdkafka::error::RDKafkaErrorCode::TopicAuthorizationFailed,
+        )));
+        assert_eq!(e.data.unwrap()["kafkaCode"], "TopicAuthorizationFailed");
     }
 
     #[test]
@@ -110,7 +129,9 @@ mod tests {
 
     #[test]
     fn partial_carries_results() {
-        let e = core_err(CoreError::Partial(vec![kafka_core::errors::ResourceResult::err("t", "x")]));
+        let e = core_err(CoreError::Partial(vec![
+            kafka_core::errors::ResourceResult::err("t", "x"),
+        ]));
         assert_eq!(e.code, codes::PARTIAL_FAILURE);
         assert_eq!(e.data.unwrap()["results"][0]["name"], "t");
     }

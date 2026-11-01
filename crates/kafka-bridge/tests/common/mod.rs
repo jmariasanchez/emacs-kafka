@@ -57,7 +57,13 @@ impl Bridge {
                 }
             }
         });
-        Self { child, stdin, rx, next: 1, backlog: Vec::new() }
+        Self {
+            child,
+            stdin,
+            rx,
+            next: 1,
+            backlog: Vec::new(),
+        }
     }
 
     pub fn raw(&mut self, v: &Value) {
@@ -81,7 +87,10 @@ impl Bridge {
         let end = Instant::now() + Duration::from_secs(secs);
         loop {
             let left = end.saturating_duration_since(Instant::now());
-            let v = self.rx.recv_timeout(left).expect("timed out waiting for message");
+            let v = self
+                .rx
+                .recv_timeout(left)
+                .expect("timed out waiting for message");
             if pred(&v) {
                 return v;
             }
@@ -104,6 +113,7 @@ impl Bridge {
 impl Drop for Bridge {
     fn drop(&mut self) {
         let _ = self.child.kill();
+        let _ = self.child.wait();
     }
 }
 
@@ -122,6 +132,11 @@ pub fn spawn_with_env(vars: &[(&str, &str)]) -> Bridge {
 }
 
 pub fn uniq(p: &str) -> String {
-    format!("{p}-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos())
+    format!(
+        "{p}-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    )
 }
-

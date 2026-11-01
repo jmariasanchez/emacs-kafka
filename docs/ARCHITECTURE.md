@@ -28,11 +28,15 @@ flowchart TB
 |---|---|---|
 | `kafka-rpc-protocol` | serde | Kafka clients, tokio |
 | `kafka-core` | rdkafka, tokio | Emacs, JSON-RPC, `kafka-rpc-protocol` |
-| `kafka-bridge` | core, protocol | |
+| `kafka-wire` | kafka-protocol, tokio, OpenSSL | Emacs, JSON-RPC |
+| `kafka-schema-registry` | reqwest, Avro, JSON Schema, Protobuf codecs | Emacs, JSON-RPC |
+| `kafka-connect-rest` | reqwest | Emacs, JSON-RPC |
+| `kafka-bridge` | core, protocol, wire and REST adapters | |
 
-Planned crates (`kafka-codec`, `kafka-connect`, `kafka-observability`) are
-created only when their code exists, per the master plan's "split when the
-boundary becomes meaningful".
+`kafka-core::ffi` wraps librdkafka admin APIs omitted by rust-rdkafka 0.39.
+RAII owns each native queue, request options and result event. `kafka-wire`
+negotiates broker API versions for operations absent even from librdkafka.
+The bridge's `ext` modules bind these clients to connection write guards.
 
 ## Concurrency model
 
@@ -51,21 +55,29 @@ boundary becomes meaningful".
 1. **Inspection never commits.** All reads use a consumer with a unique
    `kafka.el-inspect-*` group id, `enable.auto.commit=false`, manual
    `assign`, and no `commit` call anywhere. Verified in `e2e::full_workflow`.
-2. **Describing a group never joins it.** Offsets are fetched with a consumer
-   that is configured with the group id but never subscribes.
+2. **Describing a group never joins it.** The native list-consumer-group-offsets
+   admin API fetches committed partitions directly. No all-topic scan or
+   inspection consumer joins the application group.
 3. **Read-only is enforced in the core**, before any network I/O, as well as
    in the UI. A UI bug cannot bypass it.
 4. **Secrets do not leave memory.** `ConnectionConfig`'s `Debug` redacts them.
    The bridge never echoes connect params. Sensitive broker config values are
    replaced with `null`.
-5. **Destructive operations need the exact resource name** at the protocol
-   level (`confirmName`), not only in the UI.
+5. **Destructive operations need exact confirmation** at the protocol level,
+   not only in the UI. Offset resets require preview and an inactive group.
+6. **Adapter credentials are connection-scoped.** Disconnect and successful
+   profile replacement discard Connect and Registry clients and abort open
+   producer sessions. Stdin close and shutdown also abort producer sessions.
+7. **Producing transactions do not commit consumer offsets.** Dedicated
+   idempotent producers support explicit begin/produce/commit/abort sessions.
+   A produce timeout can have an indeterminate delivery outcome, so it is not
+   a safe signal to blindly retry a logical record.
 
 ## Failure handling
 
 | Failure | Behavior |
 |---|---|
-| Broker unreachable on connect | error 1000 after `timeoutMs` |
+| Broker unreachable on connect | bounded overall connection deadline, actionable auth/TLS diagnostics where available |
 | Bridge crashes or is killed | Emacs `on-shutdown` clears connection state and marks live buffers "bridge exited". Next command restarts the bridge and reconnects lazily. Tested in `kafka-it-bridge-death-recovers`. |
 | Emacs exits / stdin closes | bridge stops all streams, drains its writer, exits |
 | Records buffer killed while streaming | `kill-buffer-hook` stops the subscription. Late notifications for unknown buffers also trigger a stop. |

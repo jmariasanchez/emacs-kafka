@@ -81,8 +81,11 @@ impl State {
         };
         if msg.jsonrpc.as_deref() != Some("2.0") {
             if let Some(id) = msg.id {
-                self.send(p::response_err(id, &RpcError::new(codes::INVALID_REQUEST, "jsonrpc must be \"2.0\"")))
-                    .await;
+                self.send(p::response_err(
+                    id,
+                    &RpcError::new(codes::INVALID_REQUEST, "jsonrpc must be \"2.0\""),
+                ))
+                .await;
             }
             return;
         }
@@ -92,8 +95,11 @@ impl State {
                 if let Ok(c) = parse::<p::CancelParams>(msg.params) {
                     if let Some(h) = self.inflight.lock().await.remove(&id_key(&c.id)) {
                         h.abort();
-                        self.send(p::response_err(c.id, &RpcError::new(codes::REQUEST_CANCELLED, "cancelled")))
-                            .await;
+                        self.send(p::response_err(
+                            c.id,
+                            &RpcError::new(codes::REQUEST_CANCELLED, "cancelled"),
+                        ))
+                        .await;
                     }
                 }
             }
@@ -130,6 +136,7 @@ impl State {
                 "librdkafkaVersion": rdkafka_version(),
             })),
             m::SHUTDOWN => {
+                crate::ext::txn::abort_all(None).await;
                 self.stop_all_subs(None).await;
                 // Respond first, then let main exit.
                 let st = self.clone();
@@ -143,20 +150,30 @@ impl State {
             m::CONNECT => self.connect(parse(params)?).await,
             m::DISCONNECT => {
                 let r: p::ConnectionRef = parse(params)?;
+                crate::ext::txn::abort_all(Some(&r.connection_id)).await;
+                crate::ext::connect::forget(&r.connection_id).await;
+                crate::ext::registry::forget(&r.connection_id).await;
                 self.stop_all_subs(Some(&r.connection_id)).await;
-                let existed = self.clusters.lock().await.remove(&r.connection_id).is_some();
+                let existed = self
+                    .clusters
+                    .lock()
+                    .await
+                    .remove(&r.connection_id)
+                    .is_some();
                 Ok(json!({"disconnected": existed}))
             }
             m::CONNECTIONS => {
                 let cs = self.clusters.lock().await;
                 let mut v: Vec<Value> = cs
                     .values()
-                    .map(|c| json!({
-                        "connectionId": c.config.id,
-                        "bootstrapServers": c.config.bootstrap_servers,
-                        "readOnly": c.config.read_only,
-                        "environment": c.config.environment,
-                    }))
+                    .map(|c| {
+                        json!({
+                            "connectionId": c.config.id,
+                            "bootstrapServers": c.config.bootstrap_servers,
+                            "readOnly": c.config.read_only,
+                            "environment": c.config.environment,
+                        })
+                    })
                     .collect();
                 v.sort_by_key(|x| x["connectionId"].as_str().unwrap_or("").to_string());
                 Ok(json!(v))
@@ -169,12 +186,18 @@ impl State {
             m::BROKER_CONFIGS => {
                 let r: p::BrokerRef = parse(params)?;
                 let c = self.cluster(&r.connection_id).await?;
-                Ok(json!(c.broker_configs(r.broker_id).await.map_err(core_err)?))
+                Ok(json!(c
+                    .broker_configs(r.broker_id)
+                    .await
+                    .map_err(core_err)?))
             }
             m::TOPICS_LIST => {
                 let r: p::TopicsListParams = parse(params)?;
                 let c = self.cluster(&r.connection_id).await?;
-                Ok(json!(c.list_topics(r.include_internal, r.filter).await.map_err(core_err)?))
+                Ok(json!(c
+                    .list_topics(r.include_internal, r.filter)
+                    .await
+                    .map_err(core_err)?))
             }
             m::TOPIC_DESCRIBE => {
                 let r: p::TopicRef = parse(params)?;
@@ -190,7 +213,13 @@ impl State {
                 let r: p::TopicCreateParams = parse(params)?;
                 let c = self.cluster(&r.connection_id).await?;
                 let res = c
-                    .create_topic(&r.topic, r.partitions, r.replication_factor, &r.configs, r.validate_only)
+                    .create_topic(
+                        &r.topic,
+                        r.partitions,
+                        r.replication_factor,
+                        &r.configs,
+                        r.validate_only,
+                    )
                     .await
                     .map_err(core_err)?;
                 Ok(json!({"results": res, "validateOnly": r.validate_only}))
@@ -198,23 +227,33 @@ impl State {
             m::TOPIC_DELETE => {
                 let r: p::TopicDeleteParams = parse(params)?;
                 let c = self.cluster(&r.connection_id).await?;
-                Ok(json!({"results": c.delete_topic(&r.topic, &r.confirm_name).await.map_err(core_err)?}))
+                Ok(
+                    json!({"results": c.delete_topic(&r.topic, &r.confirm_name).await.map_err(core_err)?}),
+                )
             }
             m::TOPIC_ALTER_CONFIG => {
                 let r: p::TopicAlterConfigParams = parse(params)?;
                 let c = self.cluster(&r.connection_id).await?;
-                c.alter_topic_config(&r.topic, &r.configs, r.validate_only).await.map_err(core_err)
+                c.alter_topic_config(&r.topic, &r.configs, r.validate_only)
+                    .await
+                    .map_err(core_err)
             }
             m::TOPIC_ADD_PARTITIONS => {
                 let r: p::AddPartitionsParams = parse(params)?;
                 let c = self.cluster(&r.connection_id).await?;
-                let res = c.add_partitions(&r.topic, r.total_count, r.validate_only).await.map_err(core_err)?;
+                let res = c
+                    .add_partitions(&r.topic, r.total_count, r.validate_only)
+                    .await
+                    .map_err(core_err)?;
                 Ok(json!({"results": res, "validateOnly": r.validate_only}))
             }
             m::OFFSETS_FOR_TIME => {
                 let r: p::OffsetsForTimeParams = parse(params)?;
                 let c = self.cluster(&r.connection_id).await?;
-                Ok(json!(c.offsets_for_time(r.topic, r.timestamp).await.map_err(core_err)?))
+                Ok(json!(c
+                    .offsets_for_time(r.topic, r.timestamp)
+                    .await
+                    .map_err(core_err)?))
             }
             m::GROUPS_LIST => {
                 let r: p::ConnectionRef = parse(params)?;
@@ -224,12 +263,17 @@ impl State {
             m::GROUP_DESCRIBE => {
                 let r: p::GroupRef = parse(params)?;
                 let c = self.cluster(&r.connection_id).await?;
-                Ok(json!(c.describe_group(r.group_id).await.map_err(core_err)?))
+                Ok(json!(c
+                    .describe_group(r.group_id)
+                    .await
+                    .map_err(core_err)?))
             }
             m::GROUP_DELETE => {
                 let r: p::GroupDeleteParams = parse(params)?;
                 let c = self.cluster(&r.connection_id).await?;
-                Ok(json!({"results": c.delete_group(&r.group_id, &r.confirm_name).await.map_err(core_err)?}))
+                Ok(
+                    json!({"results": c.delete_group(&r.group_id, &r.confirm_name).await.map_err(core_err)?}),
+                )
             }
             m::PRODUCE => self.produce(parse(params)?).await,
             m::RECORDS_FETCH => {
@@ -238,7 +282,14 @@ impl State {
                 let limit = r.limit.clamp(1, 10_000);
                 let timeout = Duration::from_millis(r.timeout_ms.unwrap_or(10_000).min(120_000));
                 let res = c
-                    .fetch(r.topic, r.partitions, position(&r.start_position), limit, timeout, r.isolation_level)
+                    .fetch(
+                        r.topic,
+                        r.partitions,
+                        position(&r.start_position),
+                        limit,
+                        timeout,
+                        r.isolation_level,
+                    )
                     .await
                     .map_err(core_err)?;
                 Ok(json!({
@@ -258,20 +309,31 @@ impl State {
             }
             m::CONSUME_STOP => {
                 let r: p::SubscriptionRef = parse(params)?;
-                let s = self.subs.lock().await.remove(&r.subscription_id).ok_or_else(unknown_sub)?;
+                let s = self
+                    .subs
+                    .lock()
+                    .await
+                    .remove(&r.subscription_id)
+                    .ok_or_else(unknown_sub)?;
                 s.cancel.store(true, Ordering::SeqCst);
                 Ok(json!({"subscriptionId": r.subscription_id, "state": "stopping"}))
             }
             other => match crate::ext::dispatch(self, other, params).await {
                 Some(r) => r,
-                None => Err(RpcError::new(codes::METHOD_NOT_FOUND, format!("unknown method {other}"))),
+                None => Err(RpcError::new(
+                    codes::METHOD_NOT_FOUND,
+                    format!("unknown method {other}"),
+                )),
             },
         }
     }
 
     async fn connect(&self, r: p::ConnectParams) -> R {
         if r.connection_id.is_empty() {
-            return Err(RpcError::new(codes::INVALID_PARAMS, "connectionId must not be empty"));
+            return Err(RpcError::new(
+                codes::INVALID_PARAMS,
+                "connectionId must not be empty",
+            ));
         }
         let cfg = ConnectionConfig {
             id: r.connection_id.clone(),
@@ -290,7 +352,11 @@ impl State {
             properties: r.properties,
         };
         let (cluster, info) = Cluster::connect(cfg).await.map_err(core_err)?;
-        // Replacing an existing connection stops its streams first.
+        // Replacing an existing connection also aborts its transactions and
+        // drops endpoint credentials. A new profile must configure adapters anew.
+        crate::ext::txn::abort_all(Some(&r.connection_id)).await;
+        crate::ext::connect::forget(&r.connection_id).await;
+        crate::ext::registry::forget(&r.connection_id).await;
         self.stop_all_subs(Some(&r.connection_id)).await;
         self.clusters.lock().await.insert(r.connection_id, cluster);
         Ok(json!(info))
@@ -317,11 +383,17 @@ impl State {
         let c = self.cluster(&r.connection_id).await?;
         let sub_id = match &r.subscription_id {
             Some(s) if s.is_empty() => {
-                return Err(RpcError::new(codes::INVALID_PARAMS, "subscriptionId must not be empty"))
+                return Err(RpcError::new(
+                    codes::INVALID_PARAMS,
+                    "subscriptionId must not be empty",
+                ))
             }
             Some(s) => {
                 if self.subs.lock().await.contains_key(s) {
-                    return Err(RpcError::new(codes::INVALID_PARAMS, format!("subscription {s} already exists")));
+                    return Err(RpcError::new(
+                        codes::INVALID_PARAMS,
+                        format!("subscription {s} already exists"),
+                    ));
                 }
                 s.clone()
             }
@@ -335,14 +407,23 @@ impl State {
             r.topic.clone(),
             r.partitions,
             position(&r.start_position),
-            StreamControl { batch_size: r.batch_size, credit: credit.clone(), cancel: cancel.clone(), sink: tx },
+            StreamControl {
+                batch_size: r.batch_size,
+                credit: credit.clone(),
+                cancel: cancel.clone(),
+                sink: tx,
+            },
             r.isolation_level,
         )
         .await
         .map_err(core_err)?;
         self.subs.lock().await.insert(
             sub_id.clone(),
-            Subscription { connection_id: r.connection_id, credit, cancel },
+            Subscription {
+                connection_id: r.connection_id,
+                credit,
+                cancel,
+            },
         );
         let st = self.clone();
         let sid = sub_id.clone();
@@ -352,10 +433,13 @@ impl State {
                 let v = match ev {
                     StreamEvent::Batch(b) => {
                         seq += 1;
-                        p::notification(m::NOTIFY_RECORDS, json!({
-                            "subscriptionId": sid, "seq": seq,
-                            "records": b.iter().map(record_json).collect::<Vec<_>>(),
-                        }))
+                        p::notification(
+                            m::NOTIFY_RECORDS,
+                            json!({
+                                "subscriptionId": sid, "seq": seq,
+                                "records": b.iter().map(record_json).collect::<Vec<_>>(),
+                            }),
+                        )
                     }
                     StreamEvent::Paused => state_note(&sid, "paused", None),
                     StreamEvent::Resumed => state_note(&sid, "active", None),
@@ -390,7 +474,10 @@ fn unknown_sub() -> RpcError {
 }
 
 fn state_note(sid: &str, state: &str, msg: Option<String>) -> Value {
-    p::notification(m::NOTIFY_STATE, json!({"subscriptionId": sid, "state": state, "message": msg}))
+    p::notification(
+        m::NOTIFY_STATE,
+        json!({"subscriptionId": sid, "state": state, "message": msg}),
+    )
 }
 
 fn rdkafka_version() -> String {

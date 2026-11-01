@@ -46,13 +46,21 @@ async fn main() {
                         .ok()
                         .and_then(|v| v.get("id").cloned())
                         .unwrap_or(Value::Null);
-                    state.send(response_err(id, &RpcError::new(codes::PARSE_ERROR, e.to_string()))).await;
+                    state
+                        .send(response_err(
+                            id,
+                            &RpcError::new(codes::PARSE_ERROR, e.to_string()),
+                        ))
+                        .await;
                 }
             },
             Err(FrameError::BadHeader(h)) => {
                 eprintln!("kafka-bridge: bad frame header: {h}");
                 state
-                    .send(response_err(Value::Null, &RpcError::new(codes::PARSE_ERROR, format!("bad header: {h}"))))
+                    .send(response_err(
+                        Value::Null,
+                        &RpcError::new(codes::PARSE_ERROR, format!("bad header: {h}")),
+                    ))
                     .await;
             }
             Err(FrameError::TooLarge(n)) => {
@@ -68,6 +76,7 @@ async fn main() {
     }
     // Stdin closed or shutdown: stop streams so consumers close cleanly.
     state.stop_all_subs(None).await;
+    ext::txn::abort_all(None).await;
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     drop(state);
     let _ = tokio::time::timeout(std::time::Duration::from_secs(2), writer).await;

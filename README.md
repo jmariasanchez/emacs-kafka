@@ -7,11 +7,15 @@ backend.
 * `crates/kafka-bridge`: async JSON-RPC process Emacs talks to over stdio
 * `crates/kafka-core`: reusable Rust library over rust-rdkafka
 * `crates/kafka-rpc-protocol`: typed RPC messages
+* `crates/kafka-wire`: version-negotiated Kafka admin protocol client
+* `crates/kafka-schema-registry`: Registry REST API and schema codecs
+* `crates/kafka-connect-rest`: Connect REST API
 
-Status: **0.1, pre-release.** Connection, metadata exploration, topic admin,
-record browsing/live tail, producing, and consumer group lag work and are
-tested against a real Kafka 4.4 KRaft broker. See `docs/PARITY.md` for
-exactly what is and isn't supported.
+Status: **0.1, pre-release.** Includes ACLs, SCRAM users, incremental configs,
+quota and replica administration, safe consumer/share-group offset changes,
+transactional/batch producing, Schema Registry codecs, Kafka Connect, and
+transient menus. Native admin calls supplement rust-rdkafka without requiring
+a fork. See `docs/PARITY.md` for precise scope and remaining limits.
 
 ## Install
 
@@ -34,7 +38,10 @@ cargo build --release -p kafka-bridge
                  :sasl-username "me")))   ; password via auth-source
 ```
 
-`M-x kafka`
+`M-x kafka`. Press `?` in Kafka buffers for context-sensitive transient menus.
+Optional adapters use profile keys `:schema-registry (:url "http://localhost:18081")`
+and `:connect (:url "http://localhost:18083")`. Open them with
+`M-x kafka-schema-registry` and `M-x kafka-connect`. See [RPC](docs/RPC.md).
 
 ## Keys
 
@@ -56,7 +63,11 @@ consumer groups.
 ```sh
 scripts/kafka-dev.sh start     # local single-node KRaft broker on :19092 (needs Java 17+)
 scripts/test-all.sh            # cargo tests + e2e + ERT against that broker
+scripts/linux-check.sh         # isolated Linux build, Emacs 30.1 and live tests
 ```
+
+See [TESTING](docs/TESTING.md) for opt-in TLS/SASL, multi-broker, Registry,
+and Connect fixtures. `.cargo/config.toml` linker settings are macOS-only.
 
 Docs: [VISION](docs/VISION.md) · [SCOPE](docs/SCOPE.md) · [ARCHITECTURE](docs/ARCHITECTURE.md) · [RPC](docs/RPC.md) ·
 [PARITY](docs/PARITY.md) · [ROADMAP](docs/ROADMAP.md) · [COMPATIBILITY](docs/COMPATIBILITY.md) · [TESTING](docs/TESTING.md) · [SECURITY](SECURITY.md)

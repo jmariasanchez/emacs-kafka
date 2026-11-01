@@ -14,6 +14,11 @@ use std::{
 use tokio::sync::Mutex;
 
 static CLIENTS: LazyLock<Mutex<HashMap<String, Connect>>> = LazyLock::new(Mutex::default);
+
+/// Drop endpoint credentials when a profile disconnects or is replaced.
+pub async fn forget(connection_id: &str) {
+    CLIENTS.lock().await.remove(connection_id);
+}
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Params {

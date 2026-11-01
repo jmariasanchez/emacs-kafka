@@ -34,11 +34,63 @@ scripts/test-all.sh          # everything
 | Destructive guards | `e2e` (1002, 1003), `kafka-test-confirm-exact` |
 | Partial admin failure reporting | `convert::tests::partial_carries_results` (unit only) |
 
-## Not yet covered (release gates for later versions)
+## Extended suites
 
-* SASL and TLS brokers, invalid credentials, expired certificates, ACL denial.
-* Multi-broker KRaft: leader election, broker restart mid-stream, network
-  partition (toxiproxy).
-* Large records and topic catalogs with 10k+ topics, plus p50/p95/p99 IPC
-  overhead benchmarks.
-* Transactions (not implemented).
+| Suite | Real service coverage |
+|---|---|
+| `admin.rs` | ACLs, SCRAM, incremental config, committed offsets and safe resets, official CLI oracle |
+| `wire.rs` | quota and replica changes, leader election, log dirs, share groups, TLS/SCRAM wire transport |
+| `security.rs` | PLAIN, SCRAM-256/512, SASL_SSL, mTLS, bad password, expired certificate, wrong CA/SAN, ACL denial and secret capture |
+| `resilience.rs` | owned three-broker fixture, leader kill/pause/restart, complete outage, concurrent healthy connection, acknowledged record integrity |
+| `registry.rs` | real Karapace REST, Avro/JSON Schema/Protobuf round trips, Basic auth and mTLS |
+| `connect.rs` | real distributed Connect FileStream connector and Streams WordCount observability |
+| `txn.rs` | commit/abort isolation, explicit sessions, batch partial failures and atomic batches |
+| `load.rs` | ignored opt-in 1 MiB integrity, 5,000 topics and IPC quantiles |
+| `test/ert/*-tests.el` | all Lisp suites loaded by `scripts/test-all.sh` |
+
+Set up optional services before running the combined suite:
+
+```sh
+scripts/kafka-secure.sh start
+scripts/kafka-cluster.sh start
+eval "$(scripts/kafka-secure.sh env)"
+eval "$(scripts/kafka-cluster.sh env)"
+scripts/schema-registry-dev.sh start
+KAFKA_EL_REGISTRY_AUTH=1 scripts/schema-registry-dev.sh start
+KAFKA_EL_REGISTRY_TLS=1 scripts/schema-registry-dev.sh start
+eval "$(scripts/schema-registry-dev.sh env)"
+eval "$(KAFKA_EL_REGISTRY_AUTH=1 scripts/schema-registry-dev.sh env)"
+eval "$(KAFKA_EL_REGISTRY_TLS=1 scripts/schema-registry-dev.sh env)"
+scripts/connect-dev.sh start
+eval "$(scripts/connect-dev.sh env)"
+scripts/test-all.sh
+```
+
+The resilience test deliberately stops brokers. It refuses to use the shared
+cluster. Start a separate owned fixture with `KAFKA_CLUSTER_PORT=49092` and set
+`KAFKA_EL_TEST_RESILIENCE_CLUSTER=127.0.0.1:49092,127.0.0.1:49093,127.0.0.1:49094`
+and `KAFKA_EL_TEST_RESILIENCE_SCRIPT=$PWD/scripts/kafka-cluster.sh`.
+For the broker-disabled-mechanism test, start a separate secure fixture using
+`KAFKA_SECURE_PORT=59092 KAFKA_SECURE_MECHANISMS=PLAIN` and set
+`KAFKA_EL_TEST_SECURE_PLAIN_ONLY=127.0.0.1:59092`.
+See `docs/lanes/security-resilience.md` for exact destructive-test and load-test
+commands. Each fixture has a matching `stop` command. Preserve the same port
+and authentication environment when stopping nondefault instances.
+
+## Platform verification
+
+`scripts/linux-check.sh` runs build, warning-free clippy, strict Lisp byte
+compilation, Rust tests, and live-broker ERT in a local Linux VM. It uses Apple
+`container`, Docker, or Podman and the cached Kafka distribution. No remote
+source upload is required. `scripts/linux-check.sh quick` omits live services.
+Use `EMACS=/path/to/emacs scripts/test-all.sh` for another local Emacs version.
+GitHub Actions is configured separately in `.github/workflows/ci.yml`. A local
+VM pass is not evidence that a hosted Actions job ran.
+
+## Still not covered
+
+* OAuth issuer/token refresh, GSSAPI, managed Kafka services and Connect auth.
+* Asymmetric network partitions or packet loss through a network proxy.
+* 10,000+ topic catalogs, certificate rotation and sustained thread-pool load.
+* Schema Registry external-reference resolution and transactional consumer
+  offset commits, which are not implemented.

@@ -23,6 +23,9 @@ static REGISTRIES: OnceLock<Mutex<HashMap<String, Registration>>> = OnceLock::ne
 fn registries() -> &'static Mutex<HashMap<String, Registration>> {
     REGISTRIES.get_or_init(Mutex::default)
 }
+pub async fn forget(connection_id: &str) {
+    registries().lock().await.remove(connection_id);
+}
 fn err(e: Error) -> RpcError {
     let code = match e {
         Error::Confirmation => 1003,
