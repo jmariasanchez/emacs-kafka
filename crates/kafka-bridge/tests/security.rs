@@ -225,7 +225,9 @@ fn passwords_never_reach_stdout_or_stderr_even_with_debug() {
         let mut p = sasl(&address, "PLAIN", "admin");
         p["saslPassword"] = json!(SECRET);
         if debug {
-            p["properties"] = json!({"debug":"all"});
+            // Frequent statistics make diagnostic starvation reproducible even
+            // on an idle machine: auth errors must not sit behind log events.
+            p["properties"] = json!({"debug":"all", "statistics.interval.ms":"1"});
         }
         for (id, method, params) in [
             (1, "kafka/connect", p),
@@ -248,7 +250,8 @@ fn passwords_never_reach_stdout_or_stderr_even_with_debug() {
             if id == 1 {
                 assert_eq!(
                     reply["error"]["data"]["kafkaCode"],
-                    "SaslAuthenticationFailed"
+                    "SaslAuthenticationFailed",
+                    "debug={debug}, reply={reply}"
                 );
             }
         }

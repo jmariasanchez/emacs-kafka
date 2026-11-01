@@ -65,6 +65,9 @@ impl ConnectionConfig {
             let context = ConnectContext(diagnostic.clone());
             let mut config = cfg.base_client_config()?;
             config.set("group.id", format!("kafka.el-verify-{}", unique_suffix()));
+            // This short-lived probe only needs diagnostics. Statistics can
+            // flood the native event queue ahead of authentication failures.
+            config.set("statistics.interval.ms", "0");
             let consumer: BaseConsumer<ConnectContext> = config.create_with_context(context).map_err(|error| {
                 ConnectContext(diagnostic.clone()).record(&error.to_string());
                 match diagnostic.lock().unwrap().take() {
@@ -76,7 +79,12 @@ impl ConnectionConfig {
             loop {
                 let left = deadline.saturating_duration_since(Instant::now());
                 let result = consumer.fetch_metadata(None, left.min(Duration::from_millis(100)));
-                consumer.poll(Duration::ZERO);
+                // A zero-duration poll consumes just one log/statistics event.
+                // With debug enabled that can starve the actual auth error.
+                // A bounded positive slice drains events without extending the
+                // overall connection deadline, even under continuous logging.
+                let left = deadline.saturating_duration_since(Instant::now());
+                consumer.poll(left.min(Duration::from_millis(10)));
                 if result.is_ok() {
                     return Ok(());
                 }

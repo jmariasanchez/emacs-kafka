@@ -215,6 +215,28 @@ No new capability IDs or implementation-state changes.
 | Large metadata catalog | load::topics_catalog_5000 |
 | p50/p95/p99 stdio overhead | load::rpc_overhead_2000 |
 
+## Post-merge diagnostic starvation follow-up
+
+The merged suite exposed an intermittent `OperationTimedOut` instead of
+`SaslAuthenticationFailed` with native `debug=all`. A zero-duration consumer
+poll only handles one log/statistics event per metadata attempt. Enabling
+`statistics.interval.ms=1` in the captured-output regression reproduced the
+failure reliably on this lane without artificial CPU saturation.
+
+Verification now polls diagnostics for a bounded 10 ms slice, capped by the
+remaining connection deadline, and disables statistics only on its short-lived
+verification client. Actual connection clients retain their configured
+statistics settings. Frequent statistics could otherwise prevent useful
+diagnostics from reaching the callback even with a positive polling slice.
+The 3000 ms connect budget and 5 second test hard bound are unchanged. The test
+still demands `SaslAuthenticationFailed`, never accepts timeout as success, and
+still captures both process pipes for secret leakage.
+
+Validation: the enhanced test failed before the fix and passed in ten consecutive
+real-broker runs afterwards (about 1.3 to 1.6 seconds per two-process test).
+Workspace tests and strict clippy also passed. The isolated destructive fixtures
+were not restarted during this focused follow-up.
+
 ## Remaining limitations
 
 - Security and resilience tests skip when their documented environment variables
