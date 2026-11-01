@@ -10,3 +10,9 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+reqwest = { version = "0.13", default-features = false, features = ["json", "query", "native-tls-vendored"] }
+apache-avro = { version = "0.21", default-features = false }
+protox = "0.9"
+prost-reflect = { version = "0.16", features = ["serde"] }
+prost = "0.14"
+jsonschema = { version = "0.33", default-features = false }
