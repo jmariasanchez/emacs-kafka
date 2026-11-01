@@ -169,18 +169,23 @@ impl Cluster {
         Ok((c, info))
     }
 
-    fn timeout(&self) -> Duration {
+    pub fn timeout(&self) -> Duration {
         self.config.timeout
     }
 
-    fn admin_opts(&self, validate_only: bool) -> AdminOptions {
+    /// The shared admin client (for FFI wrappers over unbound admin APIs).
+    pub fn admin_client(&self) -> &AdminClient<DefaultClientContext> {
+        &self.admin
+    }
+
+    pub fn admin_opts(&self, validate_only: bool) -> AdminOptions {
         AdminOptions::new()
             .request_timeout(Some(self.timeout()))
             .operation_timeout(Some(self.timeout()))
             .validate_only(validate_only)
     }
 
-    fn guard_write(&self) -> Result<()> {
+    pub fn guard_write(&self) -> Result<()> {
         if self.config.read_only {
             Err(CoreError::ReadOnly)
         } else {
@@ -188,7 +193,8 @@ impl Cluster {
         }
     }
 
-    async fn blocking<T, F>(&self, f: F) -> Result<T>
+    /// Run a blocking librdkafka call on the shared metadata consumer.
+    pub async fn blocking<T, F>(&self, f: F) -> Result<T>
     where
         T: Send + 'static,
         F: FnOnce(Arc<BaseConsumer>, Duration) -> Result<T> + Send + 'static,
