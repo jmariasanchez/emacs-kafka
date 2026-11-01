@@ -24,6 +24,7 @@ impl Acl {
             .as_deref()
             .unwrap_or("any")
             .to_lowercase()
+            .replace('_', "-")
             .as_str()
         {
             "any" if filter => RD_KAFKA_RESOURCE_ANY,
@@ -91,6 +92,16 @@ impl Acl {
         {
             return Err(invalid());
         }
+        if !filter
+            && self.principal.as_deref().is_none_or(|p| {
+                p.split_once(':')
+                    .is_none_or(|(kind, name)| kind.is_empty() || name.is_empty())
+            })
+        {
+            return Err(CoreError::Invalid(
+                "principal must be type:name, for example User:alice".into(),
+            ));
+        }
         let name = self.name.as_deref().map(cstring).transpose()?;
         let principal = self.principal.as_deref().map(cstring).transpose()?;
         let host = self.host.as_deref().map(cstring).transpose()?;
@@ -120,7 +131,7 @@ impl Acl {
 unsafe fn acl(p: *const rd_kafka_AclBinding_t) -> Result<Value> {
     error(rd_kafka_AclBinding_error(p))?;
     Ok(
-        json!({"resourceType":text(rd_kafka_ResourceType_name(rd_kafka_AclBinding_restype(p))).to_lowercase(),
+        json!({"resourceType":text(rd_kafka_ResourceType_name(rd_kafka_AclBinding_restype(p))).to_lowercase().replace('_',"-"),
         "name":text(rd_kafka_AclBinding_name(p)),"patternType":text(rd_kafka_ResourcePatternType_name(rd_kafka_AclBinding_resource_pattern_type(p))).to_lowercase(),
         "principal":text(rd_kafka_AclBinding_principal(p)),"host":text(rd_kafka_AclBinding_host(p)),
         "operation":text(rd_kafka_AclOperation_name(rd_kafka_AclBinding_operation(p))).to_lowercase().replace('_',"-"),
