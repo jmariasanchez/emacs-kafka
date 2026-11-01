@@ -30,6 +30,11 @@
 (declare-function kafka-format-time "kafka")
 (declare-function kafka-json-bool "kafka")
 (declare-function kafka-produce-from-record "kafka-producer")
+(autoload 'kafka-schema-registry-record-detail "kafka-schema-registry")
+
+(defcustom kafka-records-decoders '(kafka-schema-registry-record-detail)
+  "Functions called with connection and record to return detail text or nil."
+  :type 'hook :group 'kafka)
 
 (defcustom kafka-records-fetch-limit 200
   "Default number of records for a one-shot fetch."
@@ -385,6 +390,8 @@ This is a display filter over already-received rows."
       (let ((inhibit-read-only t))
         (erase-buffer)
         (kafka-record-insert r)
+        (dolist (decoder kafka-records-decoders)
+          (when-let* ((text (funcall decoder conn r))) (insert text)))
         (special-mode)
         (setq-local kafka-connection conn)
         (goto-char (point-min)))
