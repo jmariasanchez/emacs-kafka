@@ -9,4 +9,15 @@ license.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
+tokio = { version = "1", features = ["net", "io-util", "time", "macros", "rt-multi-thread"] }
+kafka-core = { path = "../kafka-core" }
+kafka-protocol = { version = "0.18", default-features = false, features = ["client", "gzip", "snappy"] }
+bytes = "1"
+anyhow = "1"
+openssl = { version = "0.10", features = ["vendored"] }
+tokio-openssl = "0.6"
+base64 = "0.22"
+hmac = "0.12"
+sha2 = "0.10"
+pbkdf2 = "0.12"
+stringprep = "0.1"
