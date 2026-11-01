@@ -28,6 +28,7 @@ scripts/test-all.sh          # everything
 | Binary-safe payloads, empty and null | `e2e::full_workflow`, `convert::tests::binary_safe` |
 | Retrieval vs decode errors distinct | `convert::tests::bad_base64_is_decode_error` (1006 vs 1000) |
 | Malformed frames | `transport::tests::*`, `e2e::protocol_errors_without_broker` |
+| No duplicated or lost stream batches under interleaved sync requests | `kafka-it-stream-no-duplicate-or-lost-batches` (300 records, batch 7). Fails when a duplicate dispatch or a dropped batch is injected. |
 | Subprocess death | `kafka-it-bridge-death-recovers` |
 | Notifications not stuck behind sync replies (jsonrpc 1.0.16) | `kafka-it-explorer-workflow` live-tail step. Fails 3/3 on Emacs 29.4 with `kafka-rpc--drain` disabled. |
 | Destructive guards | `e2e` (1002, 1003), `kafka-test-confirm-exact` |

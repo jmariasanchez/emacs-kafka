@@ -233,5 +233,51 @@
     (let ((kafka-clusters '(("bad" :bootstrap "127.0.0.1:1" :timeout-ms 500))))
       (should-error (kafka-ensure-connected "bad") :type 'kafka-error))))
 
+(ert-deftest kafka-it-stream-no-duplicate-or-lost-batches ()
+  "Interleave many sync requests with a live stream.
+Checks that `kafka-rpc--drain' never processes a message twice or drops
+one: notification seq numbers must be exactly 1..N and every produced
+record must show up exactly once."
+  (kafka-tests-with-cluster
+    (kafka-ensure-connected "t-rw")
+    (let* ((topic (kafka-tests-topic))
+           (n 300)
+           (seqs nil)
+           (spy (lambda (p) (push (plist-get p :seq) seqs)))
+           (kafka-records-batch-size 7)
+           (kafka-records-max-rows 100000))
+      (kafka-rpc-request :kafka/topic/create
+                         (list :connectionId "t-rw" :topic topic :partitions 3 :replicationFactor 1))
+      (kafka-tests-wait (lambda () (ignore-errors
+                                     (kafka-rpc-request :kafka/topic/describe
+                                                        (list :connectionId "t-rw" :topic topic)))))
+      (kafka-rpc-on-notification 'kafka/consume/records spy)
+      (unwind-protect
+          (with-current-buffer (kafka-records "t-rw" topic nil '(:type "latest"))
+            (kafka-tests-wait (lambda () (not (equal kafka-records--status "fetching…"))))
+            (kafka-records-live)
+            (kafka-tests-wait (lambda () (equal kafka-records--state "active")))
+            (dotimes (i n)
+              (kafka-rpc-request :kafka/produce
+                                 (list :connectionId "t-rw" :topic topic :key (format "k%d" i)
+                                       :value (number-to-string i))))
+            (kafka-tests-wait (lambda () (>= (length kafka-records--rows) n)) 30)
+            ;; Let any duplicate deliveries land before asserting.
+            (let ((end (+ (float-time) 1.0)))
+              (while (< (float-time) end) (accept-process-output nil 0.05)))
+            (let ((values (sort (mapcar (lambda (r) (string-to-number
+                                                     (plist-get (plist-get r :value) :data)))
+                                        kafka-records--rows)
+                                #'<)))
+              (should (equal values (number-sequence 0 (1- n)))))
+            (should (equal (sort (copy-sequence seqs) #'<)
+                           (number-sequence 1 (length seqs))))
+            (kafka-records-stop))
+        (setf (gethash 'kafka/consume/records kafka-rpc--notification-handlers)
+              (delq spy (gethash 'kafka/consume/records kafka-rpc--notification-handlers)))
+        (ignore-errors
+          (kafka-rpc-request :kafka/topic/delete
+                             (list :connectionId "t-rw" :topic topic :confirmName topic)))))))
+
 (provide 'kafka-tests)
 ;;; kafka-tests.el ends here
