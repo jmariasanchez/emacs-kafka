@@ -238,7 +238,7 @@ impl State {
                 let limit = r.limit.clamp(1, 10_000);
                 let timeout = Duration::from_millis(r.timeout_ms.unwrap_or(10_000).min(120_000));
                 let res = c
-                    .fetch(r.topic, r.partitions, position(&r.start_position), limit, timeout)
+                    .fetch(r.topic, r.partitions, position(&r.start_position), limit, timeout, r.isolation_level)
                     .await
                     .map_err(core_err)?;
                 Ok(json!({
@@ -336,6 +336,7 @@ impl State {
             r.partitions,
             position(&r.start_position),
             StreamControl { batch_size: r.batch_size, credit: credit.clone(), cancel: cancel.clone(), sink: tx },
+            r.isolation_level,
         )
         .await
         .map_err(core_err)?;

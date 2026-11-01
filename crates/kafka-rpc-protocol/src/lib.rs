@@ -291,6 +291,8 @@ pub enum StartPosition {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FetchParams {
+    #[serde(default)]
+    pub isolation_level: Option<String>,
     pub connection_id: String,
     pub topic: String,
     #[serde(default)]
@@ -310,6 +312,8 @@ fn default_fetch_limit() -> usize {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConsumeStartParams {
+    #[serde(default)]
+    pub isolation_level: Option<String>,
     pub connection_id: String,
     /// Optional client-chosen id, so the client can register a handler before
     /// the first notification can possibly arrive. Must be unique.

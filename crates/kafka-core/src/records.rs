@@ -130,6 +130,16 @@ fn resolve_assignment(
 }
 
 impl Cluster {
+    fn inspection_config(&self, isolation: Option<String>) -> Result<crate::ConnectionConfig> {
+        let isolation = isolation.as_deref().unwrap_or("read_uncommitted");
+        if !matches!(isolation, "read_committed" | "read_uncommitted") {
+            return Err(CoreError::Invalid("isolationLevel must be read_committed or read_uncommitted".into()));
+        }
+        let mut cfg = self.config.clone();
+        cfg.properties.insert("isolation.level".into(), isolation.into());
+        Ok(cfg)
+    }
+
     pub async fn produce(&self, req: ProduceRequest) -> Result<DeliveryReport> {
         let producer = self.producer().await?;
         let mut headers = OwnedHeaders::new();
@@ -181,9 +191,10 @@ impl Cluster {
         pos: Position,
         limit: usize,
         timeout: Duration,
+        isolation_level: Option<String>,
     ) -> Result<FetchResult> {
+        let cfg = self.inspection_config(isolation_level)?;
         let parts = self.resolve_parts(&topic, parts).await?;
-        let cfg = self.config.clone();
         tokio::task::spawn_blocking(move || {
             let c = cfg.inspection_consumer()?;
             let t = cfg.timeout;
@@ -238,10 +249,11 @@ impl Cluster {
         parts: Option<Vec<i32>>,
         pos: Position,
         ctl: StreamControl,
+        isolation_level: Option<String>,
     ) -> Result<()> {
         let StreamControl { batch_size, credit, cancel, sink } = ctl;
+        let cfg = self.inspection_config(isolation_level)?;
         let parts = self.resolve_parts(&topic, parts).await?;
-        let cfg = self.config.clone();
         let c = cfg.inspection_consumer()?;
         let (tpl, _) = {
             let topic = topic.clone();
