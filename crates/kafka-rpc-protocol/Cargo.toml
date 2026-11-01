@@ -3,6 +3,7 @@ name = "kafka-rpc-protocol"
 description = "Typed JSON-RPC messages exchanged between kafka.el and kafka-bridge"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 
 [dependencies]

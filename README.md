@@ -19,7 +19,7 @@ a fork. See `docs/PARITY.md` for precise scope and remaining limits.
 
 ## Install
 
-Requirements: Emacs 29.1+, Rust 1.85+, a C toolchain and `cmake`/`make`
+Requirements: Emacs 29.1+, Rust 1.89+, a C toolchain and `cmake`/`make`
 (librdkafka and OpenSSL are built from source and statically linked).
 
 ```sh
@@ -41,7 +41,7 @@ cargo build --release -p kafka-bridge
 `M-x kafka`. Press `?` in Kafka buffers for context-sensitive transient menus.
 Optional adapters use profile keys `:schema-registry (:url "http://localhost:18081")`
 and `:connect (:url "http://localhost:18083")`. Open them with
-`M-x kafka-schema-registry` and `M-x kafka-connect`. See [RPC](docs/RPC.md).
+`M-x kafka-schema-registry` and `M-x kafka-connectors`. See [RPC](docs/RPC.md).
 
 ## Keys
 

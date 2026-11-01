@@ -3,6 +3,7 @@ name = "kafka-wire"
 description = "Minimal async Kafka wire-protocol admin client for APIs librdkafka does not expose (reassignment, log dirs, quotas, share groups)"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 
 [dependencies]

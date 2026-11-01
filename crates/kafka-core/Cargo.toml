@@ -3,6 +3,7 @@ name = "kafka-core"
 description = "Reusable high-level Kafka operations built on rust-rdkafka"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 
 [dependencies]

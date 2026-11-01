@@ -3,6 +3,7 @@ name = "kafka-schema-registry"
 description = "Confluent-compatible Schema Registry REST client and Avro/Protobuf/JSON Schema decoding"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 
 [dependencies]

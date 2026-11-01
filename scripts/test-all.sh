@@ -30,7 +30,7 @@ fi
 cargo test --workspace
 cargo build -p kafka-bridge
 ERT_FILES=()
-for f in test/ert/*-tests.el; do ERT_FILES+=(-l "$(basename "$f")"); done
+for f in test/ert/*-tests.el; do ERT_FILES+=(--eval "(require '$(basename "$f" .el))"); done
 TARGET="${CARGO_TARGET_DIR:-$PWD/target}"
 case "$TARGET" in /*) ;; *) TARGET="$PWD/$TARGET" ;; esac
 KAFKA_EL_BRIDGE="$TARGET/debug/kafka-bridge" "${EMACS:-emacs}" -Q --batch -L lisp -L test/ert \

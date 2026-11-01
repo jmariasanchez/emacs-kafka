@@ -77,6 +77,14 @@ pub const CAPABILITIES: &[Capability] = &[
     cap("connect", Adapter, true, "Connect REST lifecycle, validation, plugins, tasks, topics and offsets"),
     cap("streams.observability", Wrapper, true, "group/topic heuristic, lag and members; no Streams runtime or metrics"),
     cap("ui.workflows", Wrapper, true, "transient menus, bookmarks, saved queries, bounded search and record diff"),
+    cap("auth.oauthRefresh", Gap, false, "static librdkafka properties only; no token refresh provider or live issuer verification"),
+    cap("auth.kerberos", Gap, false, "GSSAPI feature and test realm not configured"),
+    cap("delegationTokens", Gap, false, "delegation token administration not implemented"),
+    cap("consume.share", Gap, false, "share administration exists, but no share consumer or acknowledgement runtime"),
+    cap("consume.groupSubscription", Gap, false, "inspection is manual assignment only"),
+    cap("produce.transactionalOffsets", Gap, false, "producing transactions do not commit consumer offsets"),
+    cap("schemaRegistry.references", Gap, false, "reference metadata retained, external codec dependency resolution not implemented"),
+    cap("metrics", Gap, false, "no metrics collection or statistics dashboards"),
 ];
 
 #[cfg(test)]

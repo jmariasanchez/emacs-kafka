@@ -3,6 +3,7 @@ name = "kafka-bridge"
 description = "Asynchronous JSON-RPC bridge between Emacs and Kafka"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
