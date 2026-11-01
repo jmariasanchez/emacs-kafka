@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Three-node KRaft cluster (combined broker+controller) for multi-broker,
 # leader election, reassignment and broker-restart tests.
-# Usage: scripts/kafka-cluster.sh start|stop|status|kill N|restart N|env
+# Usage: scripts/kafka-cluster.sh start|stop|status|kill N|restart N|pause N|resume N|env
 #   Brokers on 127.0.0.1:39092, :39093, :39094; controllers on :39192..:39194.
 set -euo pipefail
 VER="${KAFKA_VERSION:-4.4.0}"
@@ -12,13 +12,19 @@ RUN="$CACHE/cluster-$BASE"
 N=3
 here="$(cd "$(dirname "$0")" && pwd)"
 
+case "${1:-}" in
+  kill|restart|start-node|pause|resume)
+    case "${2:-}" in 1|2|3) ;; *) echo "node must be 1, 2 or 3" >&2; exit 2 ;; esac ;;
+esac
+
 port() { echo $((BASE + $1 - 1)); }
 cport() { echo $((BASE + 100 + $1 - 1)); }
 voters() { local v=""; for i in $(seq 1 $N); do v="$v${v:+,}$i@127.0.0.1:$(cport "$i")"; done; echo "$v"; }
 bootstrap() { local v=""; for i in $(seq 1 $N); do v="$v${v:+,}127.0.0.1:$(port "$i")"; done; echo "$v"; }
 
 write_props() {
-  local i=$1 d="$RUN/n$i"
+  local i=$1
+  local d="$RUN/n$i"
   mkdir -p "$d"
   cat > "$d/server.properties" <<P
 process.roles=broker,controller
@@ -39,14 +45,16 @@ P
 }
 
 start_node() {
-  local i=$1 d="$RUN/n$i"
+  local i=$1
+  local d="$RUN/n$i"
   if [ -f "$d/pid" ] && kill -0 "$(cat "$d/pid")" 2>/dev/null; then return; fi
   nohup "$HOME_DIR/bin/kafka-server-start.sh" "$d/server.properties" >"$d/server.log" 2>&1 &
   echo $! > "$d/pid"
 }
 
 stop_node() {
-  local i=$1 d="$RUN/n$i" sig=${2:-TERM}
+  local i=$1
+  local d="$RUN/n$i" sig=${2:-TERM}
   if [ -f "$d/pid" ]; then
     local pid; pid="$(cat "$d/pid")"
     kill "-$sig" "$pid" 2>/dev/null || true
@@ -85,10 +93,14 @@ case "${1:-}" in
     up=0; for i in $(seq 1 $N); do [ -f "$RUN/n$i/pid" ] && kill -0 "$(cat "$RUN/n$i/pid")" 2>/dev/null && up=$((up + 1)); done
     [ "$up" -eq "$N" ] && echo running || echo "stopped ($up/$N up)" ;;
   kill) stop_node "${2:?node}" KILL; echo "node $2 killed" ;;
+  pause) kill -STOP "$(cat "$RUN/n${2:?node}/pid")"; echo "node $2 paused" ;;
+  resume)
+    if [ -f "$RUN/n${2:?node}/pid" ]; then kill -CONT "$(cat "$RUN/n$2/pid")" 2>/dev/null || true; fi
+    echo "node $2 resumed" ;;
   restart) stop_node "${2:?node}"; start_node "$2"; wait_up "$2"; echo "node $2 restarted" ;;
   start-node) start_node "${2:?node}"; wait_up "$2"; echo "node $2 started" ;;
   env)
     echo "export KAFKA_EL_TEST_CLUSTER=$(bootstrap)"
     echo "export KAFKA_EL_TEST_CLUSTER_SCRIPT=$here/kafka-cluster.sh" ;;
-  *) echo "usage: $0 start|stop|status|kill N|restart N|start-node N|env" >&2; exit 2 ;;
+  *) echo "usage: $0 start|stop|status|kill N|restart N|start-node N|pause N|resume N|env" >&2; exit 2 ;;
 esac
