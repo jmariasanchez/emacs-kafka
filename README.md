@@ -1,5 +1,7 @@
 # kafka.el
 
+[![CI](https://github.com/jmariasanchez/emacs-kafka/actions/workflows/ci.yml/badge.svg)](https://github.com/jmariasanchez/emacs-kafka/actions/workflows/ci.yml)
+
 A native Emacs environment for Apache Kafka, powered by a reusable Rust
 backend.
 

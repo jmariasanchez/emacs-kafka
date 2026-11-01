@@ -68,4 +68,6 @@ owned three-node fixture on ports 49092 through 49094.
 
 ## Reporting vulnerabilities
 
-Please report privately to the maintainers rather than filing a public issue.
+Please [report a vulnerability privately](https://github.com/jmariasanchez/emacs-kafka/security/advisories/new)
+rather than filing a public issue. Include affected versions, reproduction steps,
+and potential impact, with all credentials and production data removed.

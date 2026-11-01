@@ -9,6 +9,26 @@ permissions:
   contents: read
 
 jobs:
+  required:
+    name: CI
+    if: always()
+    needs: [test, security-resilience, ecosystem]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require all test suites to pass
+        env:
+          RESULTS: ${{ toJSON(needs.*.result) }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          results = json.loads(os.environ["RESULTS"])
+          sys.exit(0 if results and all(result == "success" for result in results) else 1)
+          PY
+
   test:
     strategy:
       fail-fast: false

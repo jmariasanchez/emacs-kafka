@@ -1,0 +1,36 @@
+name: Bug report
+description: Report a reproducible problem with kafka.el.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include credentials, tokens, private keys, or production record contents.
+        Report vulnerabilities privately using the repository's Security tab.
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include OS, Emacs, Rust, Kafka, and kafka.el version or commit. Include Schema Registry or Connect versions if relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Include a minimal configuration with all secrets removed.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include sanitized errors or backtraces. Do not enable RPC event logging with production credentials.
+    validations:
+      required: true
