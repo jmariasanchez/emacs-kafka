@@ -160,6 +160,35 @@ Live Rust tests skip without `KAFKA_EL_TEST_BOOTSTRAP` and their corresponding
 `KAFKA_EL_TEST_REGISTRY_CERTS`. ERT live tests require the plain registry variable.
 The Rust Avro workflow calls curl directly for an independent REST oracle.
 
+### Validation performed on 2026-11-01
+
+* `CARGO_BUILD_JOBS=4 cargo test --workspace` with the plain broker, Kafka CLI
+  home, and all three registry fixture variables: 38 tests passed, including
+  nine registry unit tests and five real registry/broker e2e tests. No failures.
+* `CARGO_BUILD_JOBS=4 cargo clippy --workspace --all-targets -- -D warnings`:
+  passed. `git diff --check` and `bash -n scripts/schema-registry-dev.sh` passed.
+* All `lisp/*.el` byte-compiled with `byte-compile-error-on-warn` on both Emacs
+  31.1 and 30.2 with zero compiler warnings. Generated `.elc` files removed.
+* Existing ERT plus `kafka-registry-tests.el`, using the real bridge, broker,
+  and plain registry: 17/17 passed on Emacs 31.1 and 17/17 on Emacs 30.2.
+* Real `start`, `stop`, `status`, and `env` fixture commands exercised. The
+  plain fixture was stopped and restarted, then the full live suites passed.
+  curl independently verified schemas, basic-auth 401/200 behavior, and mTLS
+  master availability. All three fixtures remain running.
+
+```sh
+export CARGO_BUILD_JOBS=4 KAFKA_EL_TEST_BOOTSTRAP=127.0.0.1:19092
+export KAFKA_EL_TEST_KAFKA_HOME="$HOME/.cache/kafka-el/kafka_2.13-4.4.0"
+eval "$(scripts/schema-registry-dev.sh env)"
+eval "$(KAFKA_EL_REGISTRY_AUTH=1 scripts/schema-registry-dev.sh env)"
+eval "$(KAFKA_EL_REGISTRY_TLS=1 scripts/schema-registry-dev.sh env)"
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+KAFKA_EL_BRIDGE="$PWD/target/debug/kafka-bridge" emacs -Q --batch \
+  -L lisp -L test/ert -l kafka-tests.el -l kafka-registry-tests.el \
+  -f ert-run-tests-batch-and-exit
+```
+
 ## Limitations
 
 * External registry schema references are preserved by REST operations but
