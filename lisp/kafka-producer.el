@@ -21,6 +21,8 @@
 ;;; Code:
 
 (require 'kafka-rpc)
+(require 'json)
+(require 'seq)
 
 (defvar kafka-connection)
 (declare-function kafka-ensure-connected "kafka")
@@ -139,6 +141,105 @@
   "Discard this producer buffer."
   (interactive)
   (kill-buffer (current-buffer)))
+
+(defcustom kafka-producer-key-separator "\t"
+  "Literal separator between a key and value in region records.
+Only the first occurrence splits the line.  Nil disables key splitting."
+  :type '(choice (const nil) string) :group 'kafka)
+
+(defun kafka-producer--lines (text)
+  "Split TEXT into records, preserving empty lines except the final newline."
+  (let ((lines (split-string text "\n" nil)))
+    (if (string-suffix-p "\n" text) (butlast lines) lines)))
+
+(defun kafka-producer--line-record (line)
+  (let ((separator kafka-producer-key-separator))
+    (if (and separator (not (string-empty-p separator))
+             (string-match (regexp-quote separator) line))
+        (list :key (substring line 0 (match-beginning 0))
+              :value (substring line (match-end 0)))
+      (list :value line))))
+
+(defun kafka-producer--summary (result)
+  (let* ((results (plist-get result :results))
+         (success (seq-count (lambda (r) (eq (plist-get r :ok) t)) results)))
+    (message "Kafka batch: %d delivered, %d failed%s"
+             success (- (length results) success)
+             (if (eq (plist-get result :transactional) t)
+                 (if (eq (plist-get result :committed) t) " (committed)" " (aborted, none visible to committed readers)")
+               ""))))
+
+(defun kafka-producer--batch (name topic records transactional)
+  "Publish RECORDS to TOPIC on NAME, optionally TRANSACTIONAL."
+  (unless (<= 1 (length records) 10000)
+    (user-error "Batch must contain 1..10000 records"))
+  (kafka-confirm-write name (format "Publish %d records to %s%s" (length records) topic
+                                   (if transactional " transactionally" "")))
+  (kafka-ensure-connected name)
+  (condition-case err
+      (let ((result (kafka-rpc-request
+                     :kafka/produce/batch
+                     (list :connectionId name :topic topic :records (vconcat records)
+                           :transactional (if transactional t :json-false))
+                     (max kafka-rpc-timeout 120))))
+        (kafka-producer--summary result)
+        result)
+    (kafka-error
+     (when (= (or (nth 2 err) 0) 1005)
+       (kafka-producer--summary (nth 3 err)))
+     (signal (car err) (cdr err)))))
+
+;;;###autoload
+(defun kafka-produce-region (name topic start end &optional transactional)
+  "Publish each line between START and END to TOPIC on NAME.
+With prefix argument TRANSACTIONAL, commit the entire batch atomically."
+  (interactive (list (kafka-read-connection) (read-string "Topic: ")
+                     (region-beginning) (region-end) current-prefix-arg))
+  (when (= start end) (user-error "Region is empty"))
+  (kafka-producer--batch
+   name topic (mapcar #'kafka-producer--line-record
+                      (kafka-producer--lines (buffer-substring-no-properties start end)))
+   transactional))
+
+(defun kafka-producer--file-record (line)
+  "Parse one JSON record object or a raw LINE."
+  (if (not (string-match-p "\\`[ \t]*{" line))
+      (list :value line)
+    (let* ((object (json-parse-string line :object-type 'plist :array-type 'list
+                                     :null-object nil :false-object :json-false))
+           (headers (plist-get object :headers)))
+      (when headers
+        (setq object
+              (plist-put object :headers
+                         (vconcat
+                          (cl-loop for (key value) on headers by #'cddr
+                                   collect (kafka-rpc-clean-params
+                                            (list :key (substring (symbol-name key) 1) :value value)))))))
+      (if (seq-some (lambda (field) (plist-member object field))
+                    '(:key :value :partition :headers :encoding :timestamp))
+          (or (kafka-rpc-clean-params object) (make-hash-table :test #'equal))
+        (list :value line)))))
+
+;;;###autoload
+(defun kafka-produce-file (name topic file &optional transactional)
+  "Publish JSON Lines or raw lines from FILE to TOPIC on NAME.
+A JSON object with record fields describes key, value, headers, partition,
+encoding and timestamp.  Other JSON objects are raw payload lines.
+With prefix argument TRANSACTIONAL, commit the entire batch atomically."
+  (interactive (list (kafka-read-connection) (read-string "Topic: ")
+                     (read-file-name "Records file: " nil nil t) current-prefix-arg))
+  (let ((records (with-temp-buffer
+                   (insert-file-contents file)
+                   (when (= (point-min) (point-max)) (user-error "File is empty"))
+                   (mapcar #'kafka-producer--file-record
+                           (kafka-producer--lines (buffer-string))))))
+    (kafka-producer--batch name topic records transactional)))
+
+(defun kafka-produce-transactional (name topic start end)
+  "Publish the region START to END atomically to TOPIC on NAME."
+  (interactive (list (kafka-read-connection) (read-string "Topic: ")
+                     (region-beginning) (region-end)))
+  (kafka-produce-region name topic start end t))
 
 (provide 'kafka-producer)
 ;;; kafka-producer.el ends here
