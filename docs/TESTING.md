@@ -29,6 +29,7 @@ scripts/test-all.sh          # everything
 | Retrieval vs decode errors distinct | `convert::tests::bad_base64_is_decode_error` (1006 vs 1000) |
 | Malformed frames | `transport::tests::*`, `e2e::protocol_errors_without_broker` |
 | Subprocess death | `kafka-it-bridge-death-recovers` |
+| Notifications not stuck behind sync replies (jsonrpc 1.0.16) | `kafka-it-explorer-workflow` live-tail step. Fails 3/3 on Emacs 29.4 with `kafka-rpc--drain` disabled. |
 | Destructive guards | `e2e` (1002, 1003), `kafka-test-confirm-exact` |
 | Partial admin failure reporting | `convert::tests::partial_carries_results` (unit only) |
 

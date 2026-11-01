@@ -74,6 +74,15 @@ METHOD is a symbol such as `kafka/consume/records'."
   "Return non-nil if the bridge is running."
   (and kafka-rpc--connection (jsonrpc-running-p kafka-rpc--connection)))
 
+(defun kafka-rpc--events-args ()
+  "Initargs controlling the jsonrpc events buffer, for any jsonrpc version.
+jsonrpc 1.0.24+ uses `:events-buffer-config'.  Older versions, such as the
+1.0.16 bundled with Emacs 29, only know `:events-buffer-scrollback-size'."
+  (let ((size (if kafka-rpc-log-events 2000000 0)))
+    (if (slot-exists-p 'jsonrpc-connection '-events-buffer-config)
+        (list :events-buffer-config (list :size size))
+      (list :events-buffer-scrollback-size size))))
+
 (defun kafka-rpc--start ()
   "Start the bridge process and perform the initialize handshake."
   (unless (executable-find kafka-bridge-program)
@@ -87,13 +96,14 @@ METHOD is a symbol such as `kafka/consume/records'."
                 :coding 'utf-8-emacs-unix
                 :noquery t
                 :stderr (get-buffer-create " *kafka-bridge stderr*")))
-         (conn (jsonrpc-process-connection
+         (conn (apply
+                #'make-instance 'jsonrpc-process-connection
                 :name "kafka-bridge"
                 :process proc
-                :events-buffer-config (list :size (if kafka-rpc-log-events 2000000 0))
                 :notification-dispatcher #'kafka-rpc--dispatch-notification
                 :request-dispatcher (lambda (&rest _) (jsonrpc-error "No client methods"))
-                :on-shutdown #'kafka-rpc--on-shutdown)))
+                :on-shutdown #'kafka-rpc--on-shutdown
+                (kafka-rpc--events-args))))
     (setq kafka-rpc--connection conn)
     (setq kafka-rpc-server-info
           (jsonrpc-request conn :kafka/initialize nil :timeout kafka-rpc-timeout))
@@ -128,17 +138,34 @@ mean for an absent optional field.  Use `:json-false' for false."
   (cl-loop for (k v) on params by #'cddr
            unless (null v) append (list k v)))
 
+(defun kafka-rpc--drain ()
+  "Parse messages left buffered after a synchronous request returned.
+In jsonrpc 1.0.16 (Emacs 29) the reply to `jsonrpc-request' exits the
+process filter non-locally, so notifications that arrived in the same
+chunk wait until more output comes.  A quiet live stream would then
+never show its records.  Re-running the filter with no new input
+processes them.  Harmless on newer jsonrpc versions."
+  (when-let* ((conn kafka-rpc--connection)
+              (proc (jsonrpc--process conn))
+              ((process-live-p proc))
+              ((fboundp 'jsonrpc--process-filter)))
+    (run-at-time 0 nil (lambda ()
+                         (when (process-live-p proc)
+                           (jsonrpc--process-filter proc ""))))))
+
 (defun kafka-rpc-request (method params &optional timeout)
   "Synchronously call METHOD with PARAMS.  Signal `user-error' on failure.
 The UI stays responsive to input while waiting; `C-g' cancels."
-  (condition-case err
-      (jsonrpc-request (kafka-rpc-connection) method (kafka-rpc-clean-params params)
-                       :timeout (or timeout kafka-rpc-timeout)
-                       :cancel-on-input nil)
-    (jsonrpc-error
-     (signal 'kafka-error (list (kafka-rpc-error-message err)
-                                (kafka-rpc-error-code err)
-                                (alist-get 'jsonrpc-error-data (cdr err)))))))
+  (unwind-protect
+      (condition-case err
+          (jsonrpc-request (kafka-rpc-connection) method (kafka-rpc-clean-params params)
+                           :timeout (or timeout kafka-rpc-timeout)
+                           :cancel-on-input nil)
+        (jsonrpc-error
+         (signal 'kafka-error (list (kafka-rpc-error-message err)
+                                    (kafka-rpc-error-code err)
+                                    (alist-get 'jsonrpc-error-data (cdr err))))))
+    (kafka-rpc--drain)))
 
 (defun kafka-rpc-async (method params on-success &optional on-error)
   "Asynchronously call METHOD with PARAMS.

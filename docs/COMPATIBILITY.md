@@ -4,7 +4,7 @@
 |---|---|---|
 | Kafka brokers | KRaft clusters, Kafka 3.x and 4.x (librdkafka negotiates API versions) | 4.4.0 single-node KRaft (local) |
 | ZooKeeper-mode clusters | not targeted. Basic metadata likely works, untested. | no |
-| Emacs | 29.1+ with GNU ELPA `jsonrpc` ≥ 1.0.24 (Emacs 29 bundles an older jsonrpc that lacks `:events-buffer-config`; package.el installs the newer one from the `Package-Requires` header) | 31.1 locally (bundled jsonrpc 1.0.29). CI config covers 29.4 and 30.1 but has not run yet. |
+| Emacs | 29.1+. Works with the jsonrpc bundled in Emacs 29 (1.0.16) and newer (1.0.24+). | 29.4 (bundled jsonrpc 1.0.16) and 31.1 (jsonrpc 1.0.29): byte-compile clean, all ERT tests pass against a live broker |
 | OS | macOS (arm64, x86_64), Linux | macOS arm64 |
 | Windows | not yet. Stdio JSON-RPC should work; build not tested. | no |
 | Rust | stable, 2021 edition (needs `Option::is_none_or`, 1.82+) | 1.97 |

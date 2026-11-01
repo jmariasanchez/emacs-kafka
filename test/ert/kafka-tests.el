@@ -179,7 +179,9 @@
           (kafka-records-show)
           (with-current-buffer "*Kafka Record*"
             (should (string-match-p "\"hello\": \"world\"" (buffer-string))))
-          ;; Live tail: start at latest, produce, see it arrive.
+          ;; Live tail: start at latest, produce, see it arrive.  On Emacs 29
+          ;; (jsonrpc 1.0.16) this fails without `kafka-rpc--drain', because
+          ;; the batch arrives in the same chunk as the produce reply.
           (setq kafka-records--position '(:type "latest"))
           (kafka-records-live)
           (should kafka-records--sub)
