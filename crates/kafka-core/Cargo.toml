@@ -13,3 +13,4 @@ tokio.workspace = true
 rdkafka.workspace = true
 rdkafka-sys = "4.10"
 futures.workspace = true
+openssl = { version = "0.10", features = ["vendored"] }

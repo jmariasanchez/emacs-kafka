@@ -1,12 +1,14 @@
 //! Connection profiles and client construction.
 
 use std::collections::BTreeMap;
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use rdkafka::admin::AdminClient;
-use rdkafka::client::DefaultClientContext;
-use rdkafka::config::ClientConfig;
-use rdkafka::consumer::BaseConsumer;
+use rdkafka::client::{ClientContext, DefaultClientContext};
+use rdkafka::config::{ClientConfig, RDKafkaLogLevel};
+use rdkafka::consumer::{BaseConsumer, Consumer, ConsumerContext};
+use rdkafka::error::KafkaError;
 use rdkafka::producer::FutureProducer;
 
 use crate::errors::{CoreError, Result};
@@ -53,6 +55,64 @@ pub fn is_secret_key(key: &str) -> bool {
 }
 
 impl ConnectionConfig {
+    /// Poll connection diagnostics while establishing metadata. Only fixed,
+    /// actionable messages cross the API boundary, never broker text or secrets.
+    pub(crate) async fn verify(&self) -> Result<()> {
+        let cfg = self.clone();
+        tokio::task::spawn_blocking(move || {
+            cfg.check_certificate_validity()?;
+            let diagnostic = Arc::new(Mutex::new(None));
+            let context = ConnectContext(diagnostic.clone());
+            let mut config = cfg.base_client_config()?;
+            config.set("group.id", format!("kafka.el-verify-{}", unique_suffix()));
+            let consumer: BaseConsumer<ConnectContext> = config.create_with_context(context).map_err(|error| {
+                ConnectContext(diagnostic.clone()).record(&error.to_string());
+                match diagnostic.lock().unwrap().take() {
+                    Some((code, message)) => CoreError::Security { code, message },
+                    None => CoreError::Kafka(error),
+                }
+            })?;
+            let deadline = Instant::now() + cfg.timeout;
+            loop {
+                let left = deadline.saturating_duration_since(Instant::now());
+                let result = consumer.fetch_metadata(None, left.min(Duration::from_millis(100)));
+                consumer.poll(Duration::ZERO);
+                if result.is_ok() {
+                    return Ok(());
+                }
+                if let Some((code, message)) = diagnostic.lock().unwrap().take() {
+                    return Err(CoreError::Security { code, message });
+                }
+                if Instant::now() >= deadline {
+                    return result.map(|_| ()).map_err(CoreError::from);
+                }
+            }
+        })
+        .await
+        .map_err(|e| CoreError::Internal(e.to_string()))?
+    }
+
+    fn check_certificate_validity(&self) -> Result<()> {
+        let Some(path) = self.properties.get("ssl.certificate.location").or(self.ssl_certificate_location.as_ref()) else {
+            return Ok(());
+        };
+        let pem = std::fs::read(path).map_err(|_| CoreError::Security {
+            code: "SSL", message: "cannot read client certificate: check sslCertificateLocation and file permissions",
+        })?;
+        let certificate = openssl::x509::X509::from_pem(&pem).map_err(|_| CoreError::Security {
+            code: "SSL", message: "invalid client certificate: sslCertificateLocation must contain a PEM certificate",
+        })?;
+        let now = openssl::asn1::Asn1Time::days_from_now(0)
+            .map_err(|_| CoreError::Internal("cannot read current certificate validation time".into()))?;
+        if certificate.not_after() < now {
+            return Err(CoreError::Security { code: "SSL", message: "certificate expired: renew the client certificate" });
+        }
+        if certificate.not_before() > now {
+            return Err(CoreError::Security { code: "SSL", message: "certificate not yet valid: check the system clock and client certificate" });
+        }
+        Ok(())
+    }
+
     pub fn base_client_config(&self) -> Result<ClientConfig> {
         if self.bootstrap_servers.trim().is_empty() {
             return Err(CoreError::Invalid("bootstrap servers must not be empty".into()));
@@ -117,6 +177,42 @@ impl ConnectionConfig {
     }
 }
 
+type Diagnostic = Arc<Mutex<Option<(&'static str, &'static str)>>>;
+struct ConnectContext(Diagnostic);
+impl ConnectContext {
+    fn record(&self, reason: &str) {
+        let reason = reason.to_ascii_lowercase();
+        let diagnostic = if reason.contains("certificate verify failed") {
+            Some(("SSL", "certificate verify failed: check sslCaLocation and the broker hostname"))
+        } else if reason.contains("certificate expired") {
+            Some(("SSL", "certificate expired: renew the client certificate"))
+        } else if reason.contains("ssl handshake failed") || reason.contains("alert certificate") {
+            Some(("SSL", "TLS handshake failed: check the client certificate and private key, including certificate validity"))
+        } else if reason.contains("unsupported sasl mechanism")
+            || reason.contains("supported mechanisms")
+            || reason.contains("no provider for sasl mechanism")
+        {
+            Some(("UnsupportedSaslMechanism", "SASL mechanism not enabled: choose a mechanism supported by the broker and this client build"))
+        } else if reason.contains("authentication failed") || reason.contains("sasl authentication error") {
+            Some(("SaslAuthenticationFailed", "authentication failed: check SASL username, password and mechanism"))
+        } else {
+            None
+        };
+        if let Some(diagnostic) = diagnostic {
+            *self.0.lock().unwrap() = Some(diagnostic);
+        }
+    }
+}
+impl ClientContext for ConnectContext {
+    fn log(&self, _: RDKafkaLogLevel, _: &str, message: &str) {
+        self.record(message);
+    }
+    fn error(&self, _: KafkaError, reason: &str) {
+        self.record(reason);
+    }
+}
+impl ConsumerContext for ConnectContext {}
+
 fn unique_suffix() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     static N: AtomicU64 = AtomicU64::new(0);
@@ -130,6 +226,20 @@ fn unique_suffix() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn connection_diagnostics_never_echo_broker_text() {
+        let diagnostic = Arc::new(Mutex::new(None));
+        let context = ConnectContext(diagnostic.clone());
+        context.record("SASL authentication failed: secret-sentinel");
+        let (code, message) = diagnostic.lock().unwrap().take().unwrap();
+        assert_eq!(code, "SaslAuthenticationFailed");
+        assert!(!message.contains("secret-sentinel"));
+        context.record("SASL mechanism handshake failed: broker's supported mechanisms: PLAIN");
+        assert_eq!(diagnostic.lock().unwrap().take().unwrap().0, "UnsupportedSaslMechanism");
+        context.record("SSL handshake failed: certificate verify failed");
+        assert!(diagnostic.lock().unwrap().take().unwrap().1.contains("sslCaLocation"));
+    }
 
     #[test]
     fn debug_redacts_secrets() {

@@ -9,6 +9,8 @@ use serde_json::{json, Value};
 
 pub fn core_err(e: CoreError) -> RpcError {
     match e {
+        CoreError::Security { code, message } => RpcError::new(codes::KAFKA, message)
+            .with_data(json!({"kafkaCode": code})),
         CoreError::ReadOnly => RpcError::new(codes::READ_ONLY, e.to_string()),
         CoreError::Confirmation { .. } => RpcError::new(codes::CONFIRMATION_REQUIRED, e.to_string()),
         CoreError::Invalid(_) => RpcError::new(codes::INVALID_PARAMS, e.to_string()),
@@ -76,6 +78,14 @@ pub fn record_json(r: &RawRecord) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn security_errors_preserve_actionable_code() {
+        let e = core_err(CoreError::Security { code: "SSL", message: "certificate expired: renew it" });
+        assert_eq!(e.code, codes::KAFKA);
+        assert_eq!(e.data.unwrap()["kafkaCode"], "SSL");
+        assert!(e.message.contains("certificate expired"));
+    }
 
     #[test]
     fn binary_safe() {

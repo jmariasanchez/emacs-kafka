@@ -96,6 +96,11 @@ fn resolve_assignment(
     pos: &Position,
     t: Duration,
 ) -> Result<(TopicPartitionList, BTreeMap<i32, i64>)> {
+    let deadline = Instant::now() + t;
+    let remaining = || {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() { Err(CoreError::Timeout("resolving record offsets".into())) } else { Ok(left) }
+    };
     let mut tpl = TopicPartitionList::new();
     let mut ends = BTreeMap::new();
     let ts_offsets = if let Position::Timestamp(ts) = pos {
@@ -103,12 +108,12 @@ fn resolve_assignment(
         for p in parts {
             q.add_partition_offset(topic, *p, Offset::Offset(*ts))?;
         }
-        Some(m.offsets_for_times(q, t)?)
+        Some(m.offsets_for_times(q, remaining()?)?)
     } else {
         None
     };
     for p in parts {
-        let (low, high) = m.fetch_watermarks(topic, *p, t)?;
+        let (low, high) = m.fetch_watermarks(topic, *p, remaining()?)?;
         ends.insert(*p, high);
         let off = match pos {
             Position::Earliest => Offset::Offset(low),
@@ -159,7 +164,12 @@ impl Cluster {
         if let Some(ts) = req.timestamp {
             rec = rec.timestamp(ts);
         }
-        match producer.send(rec, self.config.timeout).await {
+        let delivery = tokio::time::timeout(self.config.timeout, producer.send(rec, self.config.timeout))
+            .await
+            .map_err(|_| CoreError::Kafka(KafkaError::MessageProduction(
+                rdkafka::error::RDKafkaErrorCode::MessageTimedOut,
+            )))?;
+        match delivery {
             Ok(d) => Ok(DeliveryReport {
                 topic: req.topic.clone(),
                 partition: d.partition,
@@ -193,11 +203,26 @@ impl Cluster {
         timeout: Duration,
         isolation_level: Option<String>,
     ) -> Result<FetchResult> {
+        // Validate before any I/O, then give setup and polling one budget.
         let cfg = self.inspection_config(isolation_level)?;
+        tokio::time::timeout(timeout, self.fetch_inner(topic, parts, pos, limit, timeout, cfg))
+            .await.map_err(|_| CoreError::Timeout("fetch deadline exceeded while resolving or reading records".into()))?
+    }
+
+    async fn fetch_inner(
+        &self,
+        topic: String,
+        parts: Option<Vec<i32>>,
+        pos: Position,
+        limit: usize,
+        timeout: Duration,
+        cfg: crate::ConnectionConfig,
+    ) -> Result<FetchResult> {
+        let deadline = Instant::now() + timeout;
         let parts = self.resolve_parts(&topic, parts).await?;
         tokio::task::spawn_blocking(move || {
             let c = cfg.inspection_consumer()?;
-            let t = cfg.timeout;
+            let t = cfg.timeout.min(deadline.saturating_duration_since(Instant::now()));
             let (tpl, ends) = resolve_assignment(&c, &topic, &parts, &pos, t)?;
             let mut done: HashSet<i32> = HashSet::new();
             for e in tpl.elements() {
@@ -208,7 +233,6 @@ impl Cluster {
                 }
             }
             c.assign(&tpl)?;
-            let deadline = Instant::now() + timeout;
             let mut records = Vec::new();
             let mut timed_out = false;
             while records.len() < limit && done.len() < parts.len() {
