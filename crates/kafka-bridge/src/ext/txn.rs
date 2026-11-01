@@ -198,15 +198,17 @@ async fn handle(st: &Arc<State>, method: &str, params: Value) -> R {
         .map(|e| e.session.clone())
         .ok_or_else(|| invalid("unknown or expired txnId"))?;
     let mut session = session.lock().await;
+    if !sessions().lock().await.contains_key(&p.txn_id) {
+        return Err(invalid("unknown or expired txnId"));
+    }
     session.touched = Instant::now();
     if method == "kafka/txn/produce" {
         let result = session
             .transaction
             .produce(request(params, "", None)?)
-            .await
-            .map_err(core_err)?;
+            .await;
         session.touched = Instant::now();
-        Ok(json!(result))
+        Ok(json!(result.map_err(core_err)?))
     } else {
         session
             .transaction
