@@ -175,6 +175,9 @@ The Rust Avro workflow calls curl directly for an independent REST oracle.
   plain fixture was stopped and restarted, then the full live suites passed.
   curl independently verified schemas, basic-auth 401/200 behavior, and mTLS
   master availability. All three fixtures remain running.
+* Repeated the fixture stop/start cycle explicitly under macOS `/bin/bash`
+  3.2, then reran all five registry e2e tests successfully. No empty-array
+  expansion dependence on newer Bash remains.
 
 ```sh
 export CARGO_BUILD_JOBS=4 KAFKA_EL_TEST_BOOTSTRAP=127.0.0.1:19092

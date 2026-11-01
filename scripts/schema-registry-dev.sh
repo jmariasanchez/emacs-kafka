@@ -10,17 +10,22 @@ if [[ "${KAFKA_EL_REGISTRY_TLS:-0}" == 1 ]]; then port=18084; fi
 root="$cache/registry-$port"
 venv="$cache/karapace-venv"
 url="http://127.0.0.1:$port"
-tls_args=()
 if [[ "$port" == 18084 ]]; then
   url="https://127.0.0.1:$port"
-  tls_args=(--cacert "$root/ca.pem" --cert "$root/client.pem" --key "$root/client.key")
 fi
 mkdir -p "$root"
 running() {
   [[ -f "$root/pid" ]] && kill -0 "$(cat "$root/pid")" 2>/dev/null &&
     [[ "$(ps -p "$(cat "$root/pid")" -o command=)" == *"$venv/bin/python -m karapace"* ]]
 }
-ready() { curl "${tls_args[@]}" --max-time 3 -fsS "$url/master_available" 2>/dev/null | rg -q '"master_available":true'; }
+ready() {
+  if [[ "$port" == 18084 ]]; then
+    curl --cacert "$root/ca.pem" --cert "$root/client.pem" --key "$root/client.key" \
+      --max-time 3 -fsS "$url/master_available" 2>/dev/null
+  else
+    curl --max-time 3 -fsS "$url/master_available" 2>/dev/null
+  fi | grep -q '"master_available"[[:space:]]*:[[:space:]]*true'
+}
 case "${1:-status}" in
   start)
     if running; then
@@ -35,7 +40,7 @@ case "${1:-status}" in
       UV_CACHE_DIR="$cache/uv" uv pip install --python "$venv/bin/python" 'karapace @ git+https://github.com/Aiven-Open/karapace.git@6.2.0'
     fi
     authfile=""
-    tls_env=()
+    tls_cert="" tls_key="" tls_ca="" tls_auth=none
     if [[ "$port" == 18084 ]]; then
       if [[ ! -f "$root/client.pem" ]] || ! openssl x509 -in "$root/client.pem" -checkend 60 -noout >/dev/null; then
         (umask 077
@@ -51,8 +56,7 @@ case "${1:-status}" in
          openssl x509 -req -in "$root/client.csr" -CA "$root/ca.pem" -CAkey "$root/ca.key" \
            -CAcreateserial -days 7 -out "$root/client.pem" >/dev/null 2>&1)
       fi
-      tls_env=(KARAPACE_SERVER_TLS_CERTFILE="$root/server.pem" KARAPACE_SERVER_TLS_KEYFILE="$root/server.key"
-               KARAPACE_SERVER_TLS_CAFILE="$root/ca.pem" KARAPACE_SERVER_TLS_CLIENT_AUTH=required)
+      tls_cert="$root/server.pem" tls_key="$root/server.key" tls_ca="$root/ca.pem" tls_auth=required
     fi
     if [[ "$port" == 18082 ]]; then
       authfile="$root/auth.json"
@@ -61,7 +65,9 @@ case "${1:-status}" in
 {"users":[{"username":"registry-user","algorithm":"sha512","salt":"u4nxBknxZO_8huyNTETTIw","password_hash":"UNGht0dpP2mZGO+/1SYX+6Vlu648qrKBQOqBJd5K+SJPzZiSaso7rj0IwprhDHKf+8z2E81/IhlByUs5+fwEbw=="}],"permissions":[{"username":"registry-user","operation":"Write","resource":".*"}]}
 JSON
     fi
-    nohup env "${tls_env[@]}" KARAPACE_HOST=127.0.0.1 KARAPACE_PORT="$port" KARAPACE_ADVERTISED_PORT="$port" \
+    nohup env KARAPACE_SERVER_TLS_CERTFILE="$tls_cert" KARAPACE_SERVER_TLS_KEYFILE="$tls_key" \
+      KARAPACE_SERVER_TLS_CAFILE="$tls_ca" KARAPACE_SERVER_TLS_CLIENT_AUTH="$tls_auth" \
+      KARAPACE_HOST=127.0.0.1 KARAPACE_PORT="$port" KARAPACE_ADVERTISED_PORT="$port" \
       KARAPACE_ADVERTISED_HOSTNAME=127.0.0.1 KARAPACE_BOOTSTRAP_URI=127.0.0.1:19092 \
       KARAPACE_CLIENT_ID="kafka-el-registry-$port" KARAPACE_GROUP_ID="kafka-el-registry-$port" \
       KARAPACE_TOPIC_NAME="_kafka_el_schemas_$port" KARAPACE_REPLICATION_FACTOR=1 \
