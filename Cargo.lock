@@ -152,11 +152,24 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "futures",
+ "kafka-connect-rest",
  "kafka-core",
- "kafka-protocol",
+ "kafka-rpc-protocol",
+ "kafka-schema-registry",
+ "kafka-wire",
  "rdkafka",
  "serde",
  "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "kafka-connect-rest"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
  "tokio",
 ]
 
@@ -173,11 +186,31 @@ dependencies = [
 ]
 
 [[package]]
-name = "kafka-protocol"
+name = "kafka-rpc-protocol"
 version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "kafka-schema-registry"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
+name = "kafka-wire"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]

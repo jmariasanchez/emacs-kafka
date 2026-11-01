@@ -4,7 +4,7 @@ Transport: JSON-RPC 2.0, `Content-Length` framed, over the bridge's
 stdin/stdout (same framing as LSP, which Emacs `jsonrpc.el` speaks natively).
 stdout carries only frames. Diagnostics go to stderr. Maximum frame: 64 MiB.
 
-Typed definitions live in `crates/kafka-protocol`. This document is the
+Typed definitions live in `crates/kafka-rpc-protocol`. This document is the
 human-readable contract.
 
 ## Lifecycle

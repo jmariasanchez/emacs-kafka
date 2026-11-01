@@ -1,6 +1,13 @@
 [workspace]
 resolver = "2"
-members = ["crates/kafka-protocol", "crates/kafka-core", "crates/kafka-bridge"]
+members = [
+    "crates/kafka-rpc-protocol",
+    "crates/kafka-core",
+    "crates/kafka-wire",
+    "crates/kafka-schema-registry",
+    "crates/kafka-connect-rest",
+    "crates/kafka-bridge",
+]
 
 [workspace.package]
 version = "0.1.0"

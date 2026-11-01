@@ -7,7 +7,10 @@ license.workspace = true
 
 [dependencies]
 kafka-core = { path = "../kafka-core" }
-kafka-protocol = { path = "../kafka-protocol" }
+kafka-wire = { path = "../kafka-wire" }
+kafka-schema-registry = { path = "../kafka-schema-registry" }
+kafka-connect-rest = { path = "../kafka-connect-rest" }
+kafka-rpc-protocol = { path = "../kafka-rpc-protocol" }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

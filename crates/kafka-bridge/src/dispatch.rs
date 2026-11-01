@@ -8,7 +8,7 @@ use std::time::Duration;
 use kafka_core::capabilities::CAPABILITIES;
 use kafka_core::records::{ProduceRequest, StreamControl, StreamEvent};
 use kafka_core::{Cluster, ConnectionConfig};
-use kafka_protocol::{self as p, codes, methods as m, RpcError};
+use kafka_rpc_protocol::{self as p, codes, methods as m, RpcError};
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, Mutex, Semaphore};
@@ -38,9 +38,9 @@ pub struct State {
     pub shutdown_signal: tokio::sync::Notify,
 }
 
-type R = Result<Value, RpcError>;
+pub type R = Result<Value, RpcError>;
 
-fn parse<T: DeserializeOwned>(v: Value) -> Result<T, RpcError> {
+pub fn parse<T: DeserializeOwned>(v: Value) -> Result<T, RpcError> {
     serde_json::from_value(v).map_err(|e| RpcError::new(codes::INVALID_PARAMS, e.to_string()))
 }
 
@@ -64,7 +64,7 @@ impl State {
         let _ = self.out.send(v).await;
     }
 
-    async fn cluster(&self, id: &str) -> Result<Arc<Cluster>, RpcError> {
+    pub async fn cluster(&self, id: &str) -> Result<Arc<Cluster>, RpcError> {
         self.clusters
             .lock()
             .await
@@ -262,7 +262,10 @@ impl State {
                 s.cancel.store(true, Ordering::SeqCst);
                 Ok(json!({"subscriptionId": r.subscription_id, "state": "stopping"}))
             }
-            other => Err(RpcError::new(codes::METHOD_NOT_FOUND, format!("unknown method {other}"))),
+            other => match crate::ext::dispatch(self, other, params).await {
+                Some(r) => r,
+                None => Err(RpcError::new(codes::METHOD_NOT_FOUND, format!("unknown method {other}"))),
+            },
         }
     }
 

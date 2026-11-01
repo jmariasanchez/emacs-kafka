@@ -5,113 +5,14 @@
 //!   scripts/kafka-dev.sh start
 //!   KAFKA_EL_TEST_BOOTSTRAP=127.0.0.1:19092 cargo test -p kafka-bridge --test e2e
 
-use std::io::{BufRead, BufReader, Read, Write};
-use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::mpsc;
+use std::io::Write;
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
-struct Bridge {
-    child: Child,
-    stdin: ChildStdin,
-    rx: mpsc::Receiver<Value>,
-    next: i64,
-    backlog: Vec<Value>,
-}
-
-impl Bridge {
-    fn spawn() -> Self {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_kafka-bridge"))
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .unwrap();
-        let stdin = child.stdin.take().unwrap();
-        let stdout = child.stdout.take().unwrap();
-        let (tx, rx) = mpsc::channel();
-        std::thread::spawn(move || {
-            let mut r = BufReader::new(stdout);
-            loop {
-                let mut len = 0usize;
-                loop {
-                    let mut l = String::new();
-                    if r.read_line(&mut l).unwrap_or(0) == 0 {
-                        return;
-                    }
-                    let l = l.trim();
-                    if l.is_empty() {
-                        break;
-                    }
-                    if let Some(v) = l.strip_prefix("Content-Length:") {
-                        len = v.trim().parse().unwrap();
-                    }
-                }
-                let mut buf = vec![0; len];
-                r.read_exact(&mut buf).unwrap();
-                if tx.send(serde_json::from_slice(&buf).unwrap()).is_err() {
-                    return;
-                }
-            }
-        });
-        Self { child, stdin, rx, next: 1, backlog: Vec::new() }
-    }
-
-    fn raw(&mut self, v: &Value) {
-        let b = serde_json::to_vec(v).unwrap();
-        write!(self.stdin, "Content-Length: {}\r\n\r\n", b.len()).unwrap();
-        self.stdin.write_all(&b).unwrap();
-        self.stdin.flush().unwrap();
-    }
-
-    fn send(&mut self, method: &str, params: Value) -> i64 {
-        let id = self.next;
-        self.next += 1;
-        self.raw(&json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}));
-        id
-    }
-
-    fn wait_for(&mut self, pred: impl Fn(&Value) -> bool, secs: u64) -> Value {
-        if let Some(i) = self.backlog.iter().position(&pred) {
-            return self.backlog.remove(i);
-        }
-        let end = Instant::now() + Duration::from_secs(secs);
-        loop {
-            let left = end.saturating_duration_since(Instant::now());
-            let v = self.rx.recv_timeout(left).expect("timed out waiting for message");
-            if pred(&v) {
-                return v;
-            }
-            self.backlog.push(v);
-        }
-    }
-
-    fn call(&mut self, method: &str, params: Value) -> Value {
-        let id = self.send(method, params);
-        self.wait_for(|v| v["id"] == json!(id), 60)
-    }
-
-    fn ok(&mut self, method: &str, params: Value) -> Value {
-        let r = self.call(method, params);
-        assert!(r.get("error").is_none(), "{method} failed: {r}");
-        r["result"].clone()
-    }
-}
-
-impl Drop for Bridge {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-    }
-}
-
-fn bootstrap() -> Option<String> {
-    std::env::var("KAFKA_EL_TEST_BOOTSTRAP").ok().filter(|s| !s.is_empty())
-}
-
-fn uniq(p: &str) -> String {
-    format!("{p}-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos())
-}
+mod common;
+use common::{bootstrap, uniq, Bridge};
 
 #[test]
 fn protocol_errors_without_broker() {

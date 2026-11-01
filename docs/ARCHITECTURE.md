@@ -26,8 +26,8 @@ flowchart TB
 
 | Crate | Depends on | Must not depend on |
 |---|---|---|
-| `kafka-protocol` | serde | Kafka clients, tokio |
-| `kafka-core` | rdkafka, tokio | Emacs, JSON-RPC, `kafka-protocol` |
+| `kafka-rpc-protocol` | serde | Kafka clients, tokio |
+| `kafka-core` | rdkafka, tokio | Emacs, JSON-RPC, `kafka-rpc-protocol` |
 | `kafka-bridge` | core, protocol | |
 
 Planned crates (`kafka-codec`, `kafka-connect`, `kafka-observability`) are

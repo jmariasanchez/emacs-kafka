@@ -5,7 +5,9 @@ pub mod capabilities;
 pub mod cluster;
 pub mod connection;
 pub mod errors;
+pub mod ffi;
 pub mod records;
+pub mod transactions;
 
 pub use cluster::Cluster;
 pub use connection::ConnectionConfig;

@@ -4,7 +4,7 @@ use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
 use kafka_core::errors::CoreError;
 use kafka_core::records::{Position, RawRecord};
-use kafka_protocol::{codes, Encoding, RpcError, StartPosition};
+use kafka_rpc_protocol::{codes, Encoding, RpcError, StartPosition};
 use serde_json::{json, Value};
 
 pub fn core_err(e: CoreError) -> RpcError {

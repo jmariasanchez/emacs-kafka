@@ -4,9 +4,10 @@
 
 mod convert;
 mod dispatch;
+mod ext;
 mod transport;
 
-use kafka_protocol::{codes, response_err, Incoming, RpcError};
+use kafka_rpc_protocol::{codes, response_err, Incoming, RpcError};
 use serde_json::Value;
 use tokio::io::BufReader;
 use tokio::sync::mpsc;

@@ -19,6 +19,7 @@ fetch() {
 }
 
 case "${1:-}" in
+  fetch) fetch ;;
   start)
     fetch
     mkdir -p "$RUN"

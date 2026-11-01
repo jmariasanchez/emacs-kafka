@@ -355,6 +355,11 @@ Each element is (NAME . PLIST).  Recognized keys:
 (require 'kafka-records)
 (require 'kafka-producer)
 (require 'kafka-groups)
+(require 'kafka-acls)
+(require 'kafka-cluster-admin)
+(require 'kafka-schema-registry)
+(require 'kafka-connect)
+(require 'kafka-transient)
 
 (provide 'kafka)
 ;;; kafka.el ends here

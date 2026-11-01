@@ -6,7 +6,7 @@ backend.
 * `lisp/`: the Emacs UI (`kafka.el`)
 * `crates/kafka-bridge`: async JSON-RPC process Emacs talks to over stdio
 * `crates/kafka-core`: reusable Rust library over rust-rdkafka
-* `crates/kafka-protocol`: typed RPC messages
+* `crates/kafka-rpc-protocol`: typed RPC messages
 
 Status: **0.1, pre-release.** Connection, metadata exploration, topic admin,
 record browsing/live tail, producing, and consumer group lag work and are

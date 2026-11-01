@@ -130,7 +130,7 @@ AlterConsumerGroupOffsets, DescribeCluster, user SCRAM). Preferred order:
    behind the same safe API, removed once upstream lands.
 3. Partition reassignment and log dirs are not in librdkafka at all; they need
    either a Java-sidecar adapter or a small native implementation over the
-   `kafka-protocol` crate (the Rust wire-protocol crate of the same name). This
+   `kafka-protocol` crate (the crates.io wire-protocol crate; our RPC crate is `kafka-rpc-protocol`). This
    decision is deferred to phase 05.
 
 ## Semantic differences to remember
