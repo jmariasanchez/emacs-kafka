@@ -116,7 +116,9 @@ session owns its connection and dedicated producer, so subsequent calls use
 commit/abort removes the session. Unknown, expired or finished ids return
 -32602. Commit failure retains the session for retry or abort.
 Disconnect/replacement and graceful shutdown remove matching sessions before
-aborting them. Queued operations on a removed session are rejected.
+attempting bounded aborts. Queued operations on a removed session are rejected.
+An unavailable broker can prevent cleanup from confirming abort, in which case
+the broker's transaction timeout remains the fallback.
 
 `idleTimeoutMs` defaults to 300000, range 1..86400000. Idle cleanup checks at
 most every second and aborts abandoned transactions. Broker transaction timeout

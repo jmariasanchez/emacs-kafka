@@ -1,22 +1,25 @@
-# SCOPE.md
+# Scope
 
-The full feature inventory spans the 11 domains of the master plan
-(148 capability targets). This file sets release boundaries. Per-operation
-status lives in `docs/PARITY.md`.
+This pre-release implements the main workflows below. `PARITY.md` is the
+per-operation implementation audit, `COMPATIBILITY.md` distinguishes live
+verification from configured support, and `ROADMAP.md` lists remaining work.
 
-| Domain | In 0.1 (this release) | Later release |
+| Domain | Implemented | Still outside scope |
 |---|---|---|
-| Cluster connections | multi-cluster, profiles, env labels, read-only, auth-source, SASL/TLS settings, timeouts, status | 0.6: SASL/TLS CI matrix, managed presets, OAuth refresh, diagnostics buffer |
-| Topics and partitions | list/filter, describe (leaders/replicas/ISR/watermarks), configs view + edit, create (validated), delete (exact name), add partitions, offsets for time, broker configs | 0.4: delete records. 0.6: reassignment, log dirs, features (gaps) |
-| Producer | key/value/headers/partition/timestamp, binary, tombstones, idempotent, delivery report, re-produce from record | 0.2: transactions, batch/file produce, templates |
-| Consumer | bounded fetch from earliest/latest/offset/timestamp/tail, live tail with flow control, never commits | 0.3: isolation level, per-partition pause/resume, opt-in group consumption, search across ranges |
-| Groups | list, describe members, committed offsets, lag, delete | 0.4: offset reset with preview. 0.8: share and streams groups |
-| Serialization | raw bytes, UTF-8 text, JSON pretty-print, hexdump | 0.5: Schema Registry, Avro, Protobuf, JSON Schema |
-| Security/governance | read-only, confirmations, secret redaction | 0.6: ACLs, quotas, SCRAM users |
-| Connect/ecosystem | none | 0.7 |
-| Observability | capabilities view | 0.7: metrics, monitor mode |
-| Emacs UX | tabulated-list views for every domain above, producer buffer, record detail | 0.9: transient menus, bookmarks, diff, events buffer |
-| Testing/distribution | unit, e2e vs real broker, ERT UI tests, CI config | 0.9: fault injection, multi-broker. 1.0: binaries, MELPA |
+| Connections | profiles, multi-cluster, read-only, auth-source, SASL/TLS, actionable errors and bounded verification | OAuth refresh, Kerberos, managed-service presets |
+| Topics/partitions | metadata, watermarks, configs, create/delete, partition count, delete records, reassignment, preferred election, log dirs, features | broad storage migration orchestration |
+| Producer | binary records, headers, tombstones, idempotence, sessions, transactions, batches, region/file and re-produce | transactional consumer offsets, templates |
+| Consumer | manual noncommitting inspection, bounded fetch, live credit flow, isolation, bounded search | group subscription, per-partition pause/resume, share delivery/ack runtime |
+| Groups | members, efficient committed offsets and lag, deletion, previewed inactive-group resets, share administration | full Streams group administration |
+| Serialization | text, JSON, hexdump, Registry REST, Avro/JSON Schema/Protobuf framing and codecs | external schema dependency resolution |
+| Governance | guarded writes, exact confirmations, ACLs, quotas, SCRAM users, incremental configuration | delegation tokens |
+| Ecosystem | Connect REST lifecycle, validation, plugins, task/offset/topic views and changes, Streams group/topic inspection | Streams execution, connector deployment packaging |
+| Observability | metadata, lag, Streams heuristics and capability audit | metrics/statistics dashboards and continuous monitoring |
+| Emacs | explorers, producer, detail, transient menus, bookmarks, saved queries, bounded search and diff | dedicated events dashboard |
+| Verification | real secure brokers, leader failure/restart/pause/outage, REST fixtures, load probes, macOS/Linux and multiple Emacs versions | hosted Actions execution, asymmetric proxy partitions, sustained load, managed-service matrix |
+| Distribution | local source builds and CI configuration | release binaries, signing, MELPA and release automation |
 
-An operation is listed as done only when its semantics and failure handling
-are tested.
+A method existing does not imply that every broker variant, authentication
+provider or hosted service is verified. Fixture-backed tests are opt-in and
+must be enabled explicitly. The capability RPC keeps remaining gaps marked
+`implemented: false` rather than presenting them as complete.

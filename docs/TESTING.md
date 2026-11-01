@@ -36,6 +36,10 @@ scripts/test-all.sh          # everything
 
 ## Extended suites
 
+`docs/lanes/` preserves per-lane implementation and validation reports. Their
+integration suggestions describe the state before merge. The current RPC
+contract is `RPC.md`, and final platform evidence is in `COMPATIBILITY.md`.
+
 | Suite | Real service coverage |
 |---|---|
 | `admin.rs` | ACLs, SCRAM, incremental config, committed offsets and safe resets, official CLI oracle |
@@ -44,11 +48,14 @@ scripts/test-all.sh          # everything
 | `resilience.rs` | owned three-broker fixture, leader kill/pause/restart, complete outage, concurrent healthy connection, acknowledged record integrity |
 | `registry.rs` | real Karapace REST, Avro/JSON Schema/Protobuf round trips, Basic auth and mTLS |
 | `connect.rs` | real distributed Connect FileStream connector and Streams WordCount observability |
-| `txn.rs` | commit/abort isolation, explicit sessions, batch partial failures and atomic batches |
+| `txn.rs` | commit/abort isolation, explicit sessions, batches, disconnect/replacement/shutdown/EOF aborts with stable-offset sentinels |
 | `load.rs` | ignored opt-in 1 MiB integrity, 5,000 topics and IPC quantiles |
 | `test/ert/*-tests.el` | all Lisp suites loaded by `scripts/test-all.sh` |
 
-Set up optional services before running the combined suite:
+Optional fixtures need Java (21 was exercised), `curl`, OpenSSL and `keytool`.
+The Registry fixture additionally needs `uv`, which installs a Python 3.12
+environment and Karapace 6.2.0 in the cache. Set up services before the combined
+suite:
 
 ```sh
 scripts/kafka-secure.sh start

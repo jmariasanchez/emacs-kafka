@@ -67,7 +67,8 @@ The bridge's `ext` modules bind these clients to connection write guards.
    not only in the UI. Offset resets require preview and an inactive group.
 6. **Adapter credentials are connection-scoped.** Disconnect and successful
    profile replacement discard Connect and Registry clients and abort open
-   producer sessions. Stdin close and shutdown also abort producer sessions.
+   producer sessions. Stdin close and shutdown also attempt bounded aborts.
+   Broker transaction expiry is the fallback when abort cannot be confirmed.
 7. **Producing transactions do not commit consumer offsets.** Dedicated
    idempotent producers support explicit begin/produce/commit/abort sessions.
    A produce timeout can have an indeterminate delivery outcome, so it is not
