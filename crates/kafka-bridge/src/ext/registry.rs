@@ -1,6 +1,6 @@
 //! Schema registry RPC adapter. Registry state is scoped by connection id.
 use crate::{
-    convert::core_err,
+    convert::{core_err, decode_in},
     dispatch::{parse, State, R},
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
@@ -11,12 +11,16 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
     collections::HashMap,
-    sync::{Arc, OnceLock},
+    sync::{Arc, OnceLock, Weak},
 };
 use tokio::sync::Mutex;
 
-static REGISTRIES: OnceLock<Mutex<HashMap<String, Registry>>> = OnceLock::new();
-fn registries() -> &'static Mutex<HashMap<String, Registry>> {
+struct Registration {
+    cluster: Weak<kafka_core::Cluster>,
+    client: Registry,
+}
+static REGISTRIES: OnceLock<Mutex<HashMap<String, Registration>>> = OnceLock::new();
+fn registries() -> &'static Mutex<HashMap<String, Registration>> {
     REGISTRIES.get_or_init(Mutex::default)
 }
 fn err(e: Error) -> RpcError {
@@ -51,11 +55,18 @@ struct Params {
     confirm_name: Option<String>,
     bytes: Option<String>,
     topic: Option<String>,
+    #[serde(default, deserialize_with = "present_value")]
     value: Option<Value>,
+    #[serde(default, deserialize_with = "present_value")]
     key: Option<Value>,
     key_subject: Option<String>,
     partition: Option<i32>,
     timestamp: Option<i64>,
+    #[serde(default)]
+    headers: Vec<kafka_rpc_protocol::Header>,
+}
+fn present_value<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Value>, D::Error> {
+    Value::deserialize(d).map(Some)
 }
 fn required<'a>(value: &'a Option<String>, name: &str) -> Result<&'a str, RpcError> {
     value
@@ -78,9 +89,22 @@ pub async fn dispatch(st: &Arc<State>, method: &str, params: Value) -> Option<R>
 async fn run(st: &Arc<State>, method: &str, params: Value) -> R {
     if method == "kafka/registry/configure" {
         let p: Configure = parse(params)?;
-        st.cluster(&p.connection_id).await?;
+        let cluster = st.cluster(&p.connection_id).await?;
+        let mut map = registries().lock().await;
+        map.retain(|_, r| r.cluster.strong_count() > 0);
+        if map.get(&p.connection_id).is_some_and(|r| {
+            r.cluster.ptr_eq(&Arc::downgrade(&cluster)) && r.client.matches_config(&p.config)
+        }) {
+            return Ok(json!({"configured":true}));
+        }
         let registry = Registry::new(p.config).map_err(err)?;
-        registries().lock().await.insert(p.connection_id, registry);
+        map.insert(
+            p.connection_id,
+            Registration {
+                cluster: Arc::downgrade(&cluster),
+                client: registry,
+            },
+        );
         return Ok(json!({"configured":true}));
     }
     let p: Params = parse(params)?;
@@ -104,7 +128,8 @@ async fn run(st: &Arc<State>, method: &str, params: Value) -> R {
         .lock()
         .await
         .get(&p.connection_id)
-        .cloned()
+        .filter(|r| r.cluster.ptr_eq(&Arc::downgrade(&cluster)))
+        .map(|r| r.client.clone())
         .ok_or_else(|| RpcError::new(codes::INVALID_PARAMS, "registry is not configured"))?;
     let version = match &p.version {
         Some(Value::String(s)) => s.clone(),
@@ -163,6 +188,11 @@ async fn run(st: &Arc<State>, method: &str, params: Value) -> R {
         }
         "kafka/registry/produce" => {
             let topic = required(&p.topic, "topic")?;
+            let headers = p
+                .headers
+                .iter()
+                .map(|h| Ok((h.key.clone(), decode_in(&h.value, h.encoding)?)))
+                .collect::<Result<Vec<_>, RpcError>>()?;
             let subject = p
                 .subject
                 .clone()
@@ -190,7 +220,7 @@ async fn run(st: &Arc<State>, method: &str, params: Value) -> R {
                     partition: p.partition,
                     value: Some(value),
                     key,
-                    headers: vec![],
+                    headers,
                     timestamp: p.timestamp,
                 })
                 .await

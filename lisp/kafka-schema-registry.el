@@ -25,6 +25,7 @@
          (user (plist-get p :basic-auth-user))
          (params (list :connectionId name :url url)))
     (dolist (pair '((:basic-auth-user . :basicAuthUser)
+                    (:validate-json-schema . :validateJsonSchema)
                     (:bearer-token . :bearerToken)
                     (:ssl-ca-location . :sslCaLocation)
                     (:ssl-certificate-location . :sslCertificateLocation)

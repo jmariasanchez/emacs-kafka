@@ -23,7 +23,7 @@ fn codec(e: impl fmt::Display) -> Error {
     Error::Codec(e.to_string())
 }
 
-#[derive(Clone, Default, Deserialize)]
+#[derive(Clone, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Config {
     pub url: String,
@@ -33,6 +33,8 @@ pub struct Config {
     pub ssl_ca_location: Option<String>,
     pub ssl_certificate_location: Option<String>,
     pub ssl_key_location: Option<String>,
+    #[serde(default)]
+    pub validate_json_schema: bool,
 }
 impl fmt::Debug for Config {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -70,6 +72,9 @@ impl fmt::Debug for Registry {
     }
 }
 impl Registry {
+    pub fn matches_config(&self, config: &Config) -> bool {
+        self.config == *config
+    }
     pub fn new(config: Config) -> Result<Self> {
         let base = Url::parse(&config.url).map_err(|_| Error::Config("invalid URL"))?;
         if !matches!(base.scheme(), "http" | "https")
@@ -130,7 +135,7 @@ impl Registry {
         }
         Ok(req)
     }
-    pub async fn api(
+    async fn api(
         &self,
         method: Method,
         segments: &[&str],
@@ -254,13 +259,27 @@ impl Registry {
         let (id, payload) = split_wire(bytes)?;
         let schema = self.by_id(id).await?;
         let value = decode_payload(&schema, payload)?;
+        if self.config.validate_json_schema {
+            validate_json(&schema, &value)?;
+        }
         Ok(json!({"schemaId":id,"subject":schema.subject,"format":schema.schema_type,"json":value}))
     }
     pub async fn encode(&self, subject: &str, value: Value) -> Result<Vec<u8>> {
         let schema = self.schema(subject, "latest").await?;
+        if self.config.validate_json_schema {
+            validate_json(&schema, &value)?;
+        }
         let payload = encode_payload(&schema, value)?;
         Ok(wire(schema.id, &payload))
     }
+}
+pub fn validate_json(schema: &Schema, value: &Value) -> Result<()> {
+    if schema.schema_type == "JSON" {
+        let document: Value = serde_json::from_str(&schema.schema).map_err(codec)?;
+        let validator = jsonschema::validator_for(&document).map_err(codec)?;
+        validator.validate(value).map_err(codec)?;
+    }
+    Ok(())
 }
 pub fn split_wire(bytes: &[u8]) -> Result<(u32, &[u8])> {
     if bytes.len() < 5 || bytes[0] != 0 {
@@ -320,17 +339,17 @@ fn protobuf_pool(schema: &Schema) -> Result<prost_reflect::DescriptorPool> {
     let mut resolver = protox::file::ChainFileResolver::new();
     // Well-known Google types remain available, without external protoc.
     resolver.add(protox::file::GoogleFileResolver::new());
-    struct Source(Option<protox::file::File>);
+    struct Source(protox::file::File);
     impl protox::file::FileResolver for Source {
         fn open_file(&self, name: &str) -> std::result::Result<protox::file::File, protox::Error> {
             if name == "registry.proto" {
-                Ok(self.0.as_ref().unwrap().clone())
+                Ok(self.0.clone())
             } else {
                 Err(protox::Error::file_not_found(name))
             }
         }
     }
-    resolver.add(Source(Some(file)));
+    resolver.add(Source(file));
     let mut compiler = protox::Compiler::with_file_resolver(resolver);
     compiler
         .include_imports(true)
@@ -454,6 +473,83 @@ mod tests {
             decode_payload(&s, &encode_payload(&s, v.clone()).unwrap()).unwrap(),
             v
         );
+    }
+    #[test]
+    fn json_validation_is_offline() {
+        let s = sample(
+            "JSON",
+            r#"{"type":"object","required":["count"],"properties":{"count":{"type":"integer"}}}"#,
+        );
+        assert!(validate_json(&s, &json!({"count":3})).is_ok());
+        assert!(validate_json(&s, &json!({"count":"bad"})).is_err());
+        assert!(validate_json(
+            &sample("JSON", r#"{"$ref":"file:///etc/passwd"}"#),
+            &json!({})
+        )
+        .is_err());
+    }
+    #[test]
+    fn protobuf_nested_and_invalid_indexes() {
+        let s = sample(
+            "PROTOBUF",
+            "syntax = \"proto3\"; message Outer { message Inner { string name = 1; } }",
+        );
+        // Zigzag array [0, 0], followed by field 1 = "hi".
+        assert_eq!(
+            decode_payload(&s, &[4, 0, 0, 10, 2, b'h', b'i']).unwrap(),
+            json!({"name":"hi"})
+        );
+        for bad in [
+            vec![],
+            vec![1],
+            vec![2],
+            vec![2, 2],
+            vec![255; 10],
+            vec![202, 1],
+        ] {
+            assert!(decode_payload(&s, &bad).is_err());
+        }
+    }
+    #[test]
+    fn bearer_auth_and_config_validation() {
+        let r = Registry::new(Config {
+            url: "https://localhost/registry".into(),
+            bearer_token: Some("test-token".into()),
+            ..Default::default()
+        })
+        .unwrap();
+        let req = r
+            .request(Method::GET, &["subjects"])
+            .unwrap()
+            .build()
+            .unwrap();
+        assert_eq!(req.headers()["authorization"], "Bearer test-token");
+        assert!(!format!("{r:?}").contains("test-token"));
+        for url in [
+            "file:///etc/passwd",
+            "http://user:password@localhost",
+            "http://localhost/?token=secret",
+        ] {
+            assert!(Registry::new(Config {
+                url: url.into(),
+                ..Default::default()
+            })
+            .is_err());
+        }
+    }
+    #[tokio::test]
+    async fn cache_and_confirmation_before_network() {
+        let r = Registry::new(Config {
+            url: "http://127.0.0.1:1".into(),
+            ..Default::default()
+        })
+        .unwrap();
+        r.cache.write().await.insert(42, sample("JSON", "{}"));
+        assert_eq!(r.by_id(42).await.unwrap().id, 42);
+        assert!(matches!(
+            r.delete("subject", None, true, "wrong").await,
+            Err(Error::Confirmation)
+        ));
     }
     #[test]
     fn auth_and_redaction() {
