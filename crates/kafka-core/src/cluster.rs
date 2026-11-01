@@ -162,11 +162,16 @@ pub struct Cluster {
 impl Cluster {
     /// Create clients and verify reachability with a metadata request.
     pub async fn connect(config: ConnectionConfig) -> Result<(Arc<Self>, ClusterInfo)> {
-        let admin = config.admin()?;
-        let meta = Arc::new(config.inspection_consumer()?);
-        let c = Arc::new(Self { config, admin, meta, producer: tokio::sync::OnceCell::new() });
-        let info = c.describe_cluster().await?;
-        Ok((c, info))
+        tokio::time::timeout(config.timeout, async {
+            config.verify().await?;
+            let admin = config.admin()?;
+            let meta = Arc::new(config.inspection_consumer()?);
+            let c = Arc::new(Self { config, admin, meta, producer: tokio::sync::OnceCell::new() });
+            let info = c.describe_cluster().await?;
+            Ok((c, info))
+        }).await.map_err(|_| CoreError::Kafka(rdkafka::error::KafkaError::MetadataFetch(
+            rdkafka::error::RDKafkaErrorCode::OperationTimedOut,
+        )))?
     }
 
     pub fn timeout(&self) -> Duration {
@@ -271,7 +276,7 @@ impl Cluster {
                 .find(|x| x.name() == topic)
                 .ok_or_else(|| CoreError::NotFound(topic.clone()))?;
             if let Some(e) = tp.error() {
-                return Err(CoreError::NotFound(format!("{topic}: {e:?}")));
+                return Err(CoreError::Kafka(rdkafka::error::KafkaError::MetadataFetch(e.into())));
             }
             let mut parts = Vec::new();
             let mut total = 0;
@@ -302,8 +307,10 @@ impl Cluster {
                 .topics()
                 .iter()
                 .find(|x| x.name() == topic)
-                .filter(|x| x.error().is_none())
                 .ok_or_else(|| CoreError::NotFound(topic.clone()))?;
+            if let Some(e) = tp.error() {
+                return Err(CoreError::Kafka(rdkafka::error::KafkaError::MetadataFetch(e.into())));
+            }
             let mut ids: Vec<i32> = tp.partitions().iter().map(|p| p.id()).collect();
             ids.sort();
             Ok(ids)

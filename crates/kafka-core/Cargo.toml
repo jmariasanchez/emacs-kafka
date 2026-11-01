@@ -12,3 +12,4 @@ thiserror.workspace = true
 tokio.workspace = true
 rdkafka.workspace = true
 futures.workspace = true
+openssl = { version = "0.10", features = ["vendored"] }

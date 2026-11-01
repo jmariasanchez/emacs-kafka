@@ -9,6 +9,8 @@ use thiserror::Error;
 pub enum CoreError {
     #[error("kafka error: {0}")]
     Kafka(#[from] KafkaError),
+    #[error("{message}")]
+    Security { code: &'static str, message: &'static str },
     #[error("invalid argument: {0}")]
     Invalid(String),
     #[error("operation refused: connection is read-only")]
