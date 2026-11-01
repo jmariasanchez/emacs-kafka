@@ -32,6 +32,21 @@ fn failure(b: &mut Bridge, params: Value, code: &str, message: &str) {
         "{r}"
     );
 }
+
+#[test]
+fn broker_disabled_mechanism() {
+    let Some(address) = env("KAFKA_EL_TEST_SECURE_PLAIN_ONLY") else {
+        return;
+    };
+    let mut b = Bridge::spawn();
+    b.ok("kafka/connect", sasl(&address, "PLAIN", "admin"));
+    failure(
+        &mut b,
+        sasl(&address, "SCRAM-SHA-256", "admin"),
+        "UnsupportedSaslMechanism",
+        "mechanism not enabled",
+    );
+}
 #[test]
 fn sasl_matrix_and_acl() {
     let Some(address) = env("KAFKA_EL_TEST_SECURE_SASL") else {
@@ -56,6 +71,36 @@ fn sasl_matrix_and_acl() {
     );
     let r = b.ok("kafka/records/fetch", json!({"connectionId":"admin","topic":topic,"startPosition":{"type":"earliest"},"limit":1,"timeoutMs":3000}));
     assert_eq!(r["records"][0]["value"]["data"], "secure-roundtrip");
+    if let (Some(home), Some(properties)) = (
+        env("KAFKA_EL_TEST_KAFKA_HOME"),
+        env("KAFKA_EL_TEST_SECURE_ADMIN_PROPS"),
+    ) {
+        let oracle = std::process::Command::new(format!("{home}/bin/kafka-console-consumer.sh"))
+            .args([
+                "--bootstrap-server",
+                &address,
+                "--command-config",
+                &properties,
+                "--topic",
+                &topic,
+                "--from-beginning",
+                "--max-messages",
+                "1",
+                "--timeout-ms",
+                "5000",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            oracle.status.success(),
+            "{}",
+            String::from_utf8_lossy(&oracle.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&oracle.stdout).trim(),
+            "secure-roundtrip"
+        );
+    }
     for method in ["kafka/topic/describe", "kafka/produce"] {
         let start = Instant::now();
         let r = b.call(
@@ -75,7 +120,11 @@ fn sasl_matrix_and_acl() {
     assert!(start.elapsed() < Duration::from_secs(5), "{groups}");
     assert!(
         groups["result"].as_array().is_some_and(|a| a.is_empty())
-            || groups["error"]["code"] == 1000,
+            || (groups["error"]["code"] == 1000
+                && matches!(
+                    groups["error"]["data"]["kafkaCode"].as_str(),
+                    Some("GroupAuthorizationFailed" | "ClusterAuthorizationFailed")
+                )),
         "{groups}"
     );
     b.ok(

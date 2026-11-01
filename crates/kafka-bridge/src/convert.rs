@@ -80,6 +80,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn security_errors_preserve_actionable_code() {
+        let e = core_err(CoreError::Security { code: "SSL", message: "certificate expired: renew it" });
+        assert_eq!(e.code, codes::KAFKA);
+        assert_eq!(e.data.unwrap()["kafkaCode"], "SSL");
+        assert!(e.message.contains("certificate expired"));
+    }
+
+    #[test]
     fn binary_safe() {
         let v = bytes_out(&Some(vec![0xff, 0x00, 0x41]));
         assert_eq!(v["encoding"], "base64");

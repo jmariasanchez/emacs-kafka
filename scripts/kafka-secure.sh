@@ -15,6 +15,8 @@
 # (CN=expired-client, notAfter in the past), and rogue-ca.pem (untrusted CA).
 #
 # `env` prints shell exports for tests (KAFKA_EL_TEST_SECURE_*).
+# KAFKA_SECURE_MECHANISMS=PLAIN with a different KAFKA_SECURE_PORT creates
+# an isolated fixture that rejects otherwise supported SCRAM mechanisms.
 set -euo pipefail
 VER="${KAFKA_VERSION:-4.4.0}"
 BASE="${KAFKA_SECURE_PORT:-29092}"
@@ -89,7 +91,7 @@ advertised.listeners=SASL_PLAINTEXT://127.0.0.1:$P_SASL,SSL://127.0.0.1:$P_SSL,S
 controller.listener.names=CONTROLLER
 listener.security.protocol.map=SASL_PLAINTEXT:SASL_PLAINTEXT,SSL:SSL,SASL_SSL:SASL_SSL,CONTROLLER:PLAINTEXT
 inter.broker.listener.name=SASL_PLAINTEXT
-sasl.enabled.mechanisms=PLAIN,SCRAM-SHA-256,SCRAM-SHA-512
+sasl.enabled.mechanisms=${KAFKA_SECURE_MECHANISMS:-PLAIN,SCRAM-SHA-256,SCRAM-SHA-512}
 sasl.mechanism.inter.broker.protocol=PLAIN
 listener.name.sasl_plaintext.plain.sasl.jaas.config=$jaas_plain
 listener.name.sasl_plaintext.scram-sha-256.sasl.jaas.config=$jaas_scram

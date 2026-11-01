@@ -52,8 +52,10 @@ fn create(b: &mut Bridge, topic: &str, rf: i32) -> i64 {
 }
 fn bounded(b: &mut Bridge, method: &str, params: Value, secs: u64) -> Value {
     let start = Instant::now();
+    eprintln!("checking {method} response deadline: {secs}s");
     let id = b.send(method, params);
     let response = b.wait_for(|v| v["id"] == id, secs);
+    eprintln!("{method} completed in {:?}", start.elapsed());
     assert!(
         start.elapsed() < Duration::from_secs(secs),
         "{method}: {response}"
@@ -134,6 +136,12 @@ fn leader_failover_outage_restart_and_pause() {
         json!({"connectionId":"dead-bootstrap","bootstrapServers":address,"timeoutMs":3000}),
     );
     guard.run("start-node", Some(leader));
+    let snapshot = b.ok("kafka/records/fetch", json!({"connectionId":"cluster","topic":topic,"startPosition":{"type":"earliest"},"limit":200,"timeoutMs":10000}));
+    assert_eq!(
+        snapshot["records"].as_array().unwrap().len(),
+        101,
+        "idempotent producer must not append duplicate retries"
+    );
     eprintln!("RF3 leader failover: 100/100 acknowledged records received exactly once");
 
     let single = uniq("pause");
@@ -165,10 +173,20 @@ fn leader_failover_outage_restart_and_pause() {
     );
     assert!(r.get("error").is_some() || r.get("result").is_some(), "{r}");
     guard.run("resume", Some(single_leader));
+    let started = Instant::now();
     let fetch = b.send("kafka/records/fetch", json!({"connectionId":"cluster","topic":single,"startPosition":{"type":"earliest"},"timeoutMs":500}));
-    guard.run("kill", Some(single_leader));
+    let mut restart = Command::new(&guard.script)
+        .env("KAFKA_CLUSTER_PORT", "49092")
+        .args(["kill", &single_leader.to_string()])
+        .spawn()
+        .unwrap();
     let r = b.wait_for(|v| v["id"] == fetch, 2);
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "fetch exceeded its end-to-end deadline"
+    );
     assert!(r.get("error").is_some() || r.get("result").is_some());
+    assert!(restart.wait().unwrap().success());
     guard.run("start-node", Some(single_leader));
 
     let plain = bootstrap().expect("plain broker required for concurrent isolation check");
@@ -179,6 +197,7 @@ fn leader_failover_outage_restart_and_pause() {
     for node in 1..=3 {
         guard.run("kill", Some(node));
     }
+    let started = Instant::now();
     let pending = b.send("kafka/topics/list", json!({"connectionId":"short"}));
     let r = bounded(
         &mut b,
@@ -191,8 +210,17 @@ fn leader_failover_outage_restart_and_pause() {
         "healthy connection blocked by outage: {r}"
     );
     let r = b.wait_for(|v| v["id"] == pending, 3);
+    assert!(started.elapsed() < Duration::from_secs(3));
     assert_eq!(r["error"]["code"], 1000, "{r}");
     assert!(r["error"]["data"]["kafkaCode"].is_string(), "{r}");
+    let r = bounded(
+        &mut b,
+        "kafka/produce",
+        json!({"connectionId":"short","topic":single,"partition":0,"value":"leader-down"}),
+        4,
+    );
+    assert_eq!(r["error"]["code"], 1000, "{r}");
+    assert_eq!(r["error"]["data"]["kafkaCode"], "MessageTimedOut", "{r}");
     guard.run("start", None);
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {

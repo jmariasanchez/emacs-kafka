@@ -154,7 +154,12 @@ impl Cluster {
         if let Some(ts) = req.timestamp {
             rec = rec.timestamp(ts);
         }
-        match producer.send(rec, self.config.timeout).await {
+        let delivery = tokio::time::timeout(self.config.timeout, producer.send(rec, self.config.timeout))
+            .await
+            .map_err(|_| CoreError::Kafka(KafkaError::MessageProduction(
+                rdkafka::error::RDKafkaErrorCode::MessageTimedOut,
+            )))?;
+        match delivery {
             Ok(d) => Ok(DeliveryReport {
                 topic: req.topic.clone(),
                 partition: d.partition,
