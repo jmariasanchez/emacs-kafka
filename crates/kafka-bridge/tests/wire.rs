@@ -391,14 +391,30 @@ fn cancel_active_reassignment() {
             .iter()
             .any(|p| p["topic"] == topic)
     });
-    let detail = b.ok(
-        "kafka/topic/describe",
-        json!({"connectionId":"wire","topic":topic}),
-    );
-    for p in detail["partitions"].as_array().unwrap() {
-        if cancelled.contains(&p["id"].as_i64().unwrap()) {
-            assert_eq!(p["replicas"], json!([1]));
+    // The controller can finish cancellation before broker metadata converges.
+    let deadline = Instant::now() + Duration::from_secs(45);
+    loop {
+        let detail = b.call(
+            "kafka/topic/describe",
+            json!({"connectionId":"wire","topic":topic}),
+        );
+        if detail["result"]["partitions"]
+            .as_array()
+            .is_some_and(|partitions| {
+                cancelled.iter().all(|id| {
+                    partitions
+                        .iter()
+                        .any(|p| p["id"] == *id && p["replicas"] == json!([1]))
+                })
+            })
+        {
+            break;
         }
+        assert!(
+            Instant::now() < deadline,
+            "cancelled partitions {cancelled:?} did not restore replicas [1]: {detail}"
+        );
+        std::thread::sleep(Duration::from_millis(200));
     }
     delete(&mut b, &topic);
 }
