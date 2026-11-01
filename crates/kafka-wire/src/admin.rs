@@ -42,6 +42,13 @@ fn timeout_ms(config: &ConnectionConfig) -> i32 {
     config.timeout.as_millis().min(i32::MAX as u128) as i32
 }
 
+fn guard_write(config: &ConnectionConfig) -> Result<()> {
+    if config.read_only {
+        bail!("operation refused: connection is read-only")
+    }
+    Ok(())
+}
+
 pub async fn features(config: &ConnectionConfig) -> Result<Value> {
     let c = Client::bootstrap(config).await?;
     let r = c.api_versions;
@@ -92,6 +99,9 @@ pub async fn alter_reassignments(
     partitions: &[Reassignment],
     dry_run: bool,
 ) -> Result<Value> {
+    if !dry_run {
+        guard_write(config)?;
+    }
     validate_reassignments(partitions)?;
     let mut c = Client::bootstrap(config).await?;
     let metadata = c.metadata().await?;
@@ -154,6 +164,7 @@ pub async fn alter_reassignments(
 }
 
 pub async fn elect(config: &ConnectionConfig, topic: &str, partitions: Vec<i32>) -> Result<Value> {
+    guard_write(config)?;
     use elect_leaders_request::TopicPartitions;
     let mut c = Client::bootstrap(config).await?;
     let r = c
@@ -239,6 +250,7 @@ pub async fn alter_quotas(
     ops: &[QuotaOp],
     validate_only: bool,
 ) -> Result<Value> {
+    guard_write(config)?;
     validate_quotas(entity, ops)?;
     use alter_client_quotas_request::{EntityData, EntryData, OpData};
     let entity = entity
@@ -357,6 +369,7 @@ pub async fn share_reset(
     offsets: &[ShareOffset],
     delete_topics: &[String],
 ) -> Result<Value> {
+    guard_write(config)?;
     let mut c = share_client(config, group).await?;
     let g = describe_share(&mut c, group).await?;
     if !g.members.is_empty() || g.group_state.as_str() != "Empty" {
@@ -418,4 +431,39 @@ pub async fn share_reset(
     Ok(
         json!({"results":r.responses.iter().flat_map(|t|t.partitions.iter().map(move |p| {let mut v = status(p.error_code); v["topic"] = json!(t.topic_name.as_str()); v["partition"] = json!(p.partition_index); v})).collect::<Vec<_>>()}),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn read_only_before_network() {
+        let config = ConnectionConfig {
+            read_only: true,
+            ..Default::default()
+        };
+        for result in [
+            alter_reassignments(&config, "x", &[], false).await,
+            elect(&config, "x", vec![0]).await,
+            alter_quotas(&config, &[], &[], false).await,
+            share_reset(&config, "g", &[], &[]).await,
+        ] {
+            assert!(result.unwrap_err().to_string().contains("read-only"));
+        }
+    }
+    #[test]
+    fn invalid_replica_lists() {
+        for replicas in [vec![], vec![1, 1], vec![-1]] {
+            assert!(validate_reassignments(&[Reassignment {
+                partition: 0,
+                replicas: Some(replicas)
+            }])
+            .is_err());
+        }
+        assert!(validate_reassignments(&[Reassignment {
+            partition: 0,
+            replicas: None
+        }])
+        .is_ok());
+    }
 }

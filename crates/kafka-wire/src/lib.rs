@@ -173,14 +173,15 @@ impl Client {
             .iter()
             .map(|k| (k.api_key, (k.min_version, k.max_version)))
             .collect();
+        // SASL permits only one ApiVersions request before the handshake.
+        if protocol.starts_with("SASL") {
+            client.authenticate(config).await?;
+        }
         let request = ApiVersionsRequest::default()
             .with_client_software_name("kafka.el".into())
             .with_client_software_version("0.1".into());
         client.api_versions = client.request(&request).await?;
         check(client.api_versions.error_code)?;
-        if protocol.starts_with("SASL") {
-            client.authenticate(config).await?;
-        }
         Ok(client)
     }
 
@@ -284,9 +285,16 @@ impl Client {
             let nonce = base64::engine::general_purpose::STANDARD.encode(nonce);
             let first = scram::first(username, &nonce)?;
             let server = self.auth_step(format!("n,,{first}").into_bytes()).await?;
-            let server = std::str::from_utf8(&server).context("invalid SCRAM challenge")?;
-            let (final_message, signature) =
-                scram::respond(mechanism, password, &nonce, &first, server)?;
+            let server = std::str::from_utf8(&server)
+                .context("invalid SCRAM challenge")?
+                .to_owned();
+            let mechanism = mechanism.to_owned();
+            let password = password.to_owned();
+            let (final_message, signature) = tokio::task::spawn_blocking(move || {
+                scram::respond(&mechanism, &password, &nonce, &first, &server)
+            })
+            .await
+            .context("SCRAM worker failed")??;
             let final_response = self.auth_step(final_message.into_bytes()).await?;
             scram::verify(&final_response, &signature)?;
         }
@@ -329,6 +337,78 @@ impl Client {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_client(socket: tokio::io::DuplexStream) -> Client {
+        Client {
+            socket: Box::new(socket),
+            versions: BTreeMap::from([(18, (0, 0))]),
+            correlation: 0,
+            timeout: Duration::from_millis(100),
+            poisoned: false,
+            api_versions: ApiVersionsResponse::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn fragmented_frame_and_correlation() {
+        for correlation in [1_i32, 99] {
+            let (socket, mut peer) = tokio::io::duplex(1024);
+            let mut client = test_client(socket);
+            let server = tokio::spawn(async move {
+                let length = peer.read_i32().await.unwrap();
+                let mut request = vec![0; length as usize];
+                peer.read_exact(&mut request).await.unwrap();
+                assert_eq!(&request[..4], &[0, 18, 0, 0]);
+                // ApiVersions v0: correlation, error, empty API array.
+                let mut response = Vec::from(10_i32.to_be_bytes());
+                response.extend(correlation.to_be_bytes());
+                response.extend([0; 6]);
+                for byte in response {
+                    peer.write_all(&[byte]).await.unwrap();
+                }
+            });
+            let response = client.request(&ApiVersionsRequest::default()).await;
+            if correlation == 1 {
+                assert_eq!(response.unwrap().error_code, 0);
+            } else {
+                assert!(response.unwrap_err().to_string().contains("correlation"));
+                assert!(client.poisoned);
+            }
+            server.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn timeout_poisoning_prevents_reuse() {
+        let (socket, _peer) = tokio::io::duplex(1024);
+        let mut client = test_client(socket);
+        assert!(client
+            .request(&ApiVersionsRequest::default())
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("timeout"));
+        assert!(client
+            .request(&ApiVersionsRequest::default())
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("unusable"));
+    }
+
+    #[test]
+    fn version_intersection() {
+        let (socket, _peer) = tokio::io::duplex(1024);
+        let mut client = test_client(socket);
+        client.versions.insert(18, (1, 100));
+        assert_eq!(
+            client.version::<ApiVersionsRequest>().unwrap(),
+            ApiVersionsRequest::VERSIONS.max
+        );
+        client.versions.insert(18, (100, 101));
+        assert!(client.version::<ApiVersionsRequest>().is_err());
+        assert!(client.version::<DescribeLogDirsRequest>().is_err());
+    }
     #[test]
     fn framing_bounds() {
         for n in [i32::MIN, -1, 0, 3, 64 * 1024 * 1024 + 1] {
