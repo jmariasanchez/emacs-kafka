@@ -1,5 +1,5 @@
 //! Additive admin RPCs. Existing topic/alterConfig and group/describe remain unchanged.
-use crate::convert::core_err;
+use crate::convert::core_err as convert_core_err;
 use crate::dispatch::{parse, State, R};
 use kafka_core::ffi::{
     Acl, ConfigChange, OffsetSelection, PartitionTarget, ResetSpec, ScramChange,
@@ -7,6 +7,22 @@ use kafka_core::ffi::{
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
+
+fn core_err(error: kafka_core::CoreError) -> kafka_rpc_protocol::RpcError {
+    // rdkafka 0.39's rdkafka_error_code() returns None for AdminOp, even
+    // though that variant carries a code. Preserve it explicitly here.
+    let code = match &error {
+        kafka_core::CoreError::Kafka(rdkafka::error::KafkaError::AdminOp(code)) => {
+            Some(format!("{code:?}"))
+        }
+        _ => None,
+    };
+    let rpc = convert_core_err(error);
+    match code {
+        Some(code) => rpc.with_data(serde_json::json!({"kafkaCode":code})),
+        None => rpc,
+    }
+}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]

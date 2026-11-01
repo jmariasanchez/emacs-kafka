@@ -289,7 +289,7 @@ fn secure_acls_and_scram() {
         .get("error")
         .is_some());
     let user = uniq("admin-scram");
-    let denied = b.call("kafka/acls/describe", json!({"connectionId":"alice"}));
+    let denied = b.call("kafka/configs/incrementalAlter",json!({"connectionId":"c","resourceType":"topic","name":t,"changes":[{"name":"kafka.el.invalid.config","operation":"set","value":"x"}]}));
     assert_eq!(denied["error"]["code"], 1000);
     assert!(denied["error"]["data"]["kafkaCode"].is_string());
     let txn = uniq("admin-txn-acl");

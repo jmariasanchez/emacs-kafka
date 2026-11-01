@@ -8,8 +8,9 @@ queues, events, options and owned errors have RAII destructors. Requests run
 on spawn_blocking with an Arc<Cluster> retained through completion, including
 when the waiting future is cancelled. The native handle comes from
 `cluster.admin_client().inner().native_ptr()`. Result data is copied before
-its owning event is released. Native error codes become KafkaError::AdminOp,
-so RPC errors retain `data.kafkaCode`.
+its owning event is released. Native error codes become KafkaError::AdminOp.
+The admin RPC converter extracts that variant explicitly to retain kafkaCode:
+rust-rdkafka 0.39's rdkafka_error_code() unexpectedly returns None for AdminOp.
 
 All mutations call guard_write before network I/O, including validateOnly
 and reset dry runs. Destructive actions require confirmName. Neither SCRAM
@@ -34,6 +35,8 @@ by Cargo for the explicit dependency.
   returns `[{topic, partition, committed}]` and never joins or commits.
 * Merge the following RPC, capability, parity and testing rows into shared docs.
 * `features.describe` remains a gap. DescribeCluster is not DescribeFeatures.
+* Consider moving the admin module's explicit AdminOp error-code extraction
+  into the shared core_err converter so legacy admin methods retain codes too.
 
 ## RPC.md additions
 
