@@ -38,7 +38,8 @@ scripts/test-all.sh          # everything
 
 `docs/lanes/` preserves per-lane implementation and validation reports. Their
 integration suggestions describe the state before merge. The current RPC
-contract is `RPC.md`, and final platform evidence is in `COMPATIBILITY.md`.
+contract is `RPC.md`. Final counts and scope are recorded in `VALIDATION.md`,
+with platform details in `COMPATIBILITY.md`.
 
 | Suite | Real service coverage |
 |---|---|

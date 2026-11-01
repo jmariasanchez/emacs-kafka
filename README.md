@@ -70,7 +70,7 @@ See [TESTING](docs/TESTING.md) for opt-in TLS/SASL, multi-broker, Registry,
 and Connect fixtures. `.cargo/config.toml` linker settings are macOS-only.
 
 Docs: [VISION](docs/VISION.md) · [SCOPE](docs/SCOPE.md) · [ARCHITECTURE](docs/ARCHITECTURE.md) · [RPC](docs/RPC.md) ·
-[PARITY](docs/PARITY.md) · [ROADMAP](docs/ROADMAP.md) · [COMPATIBILITY](docs/COMPATIBILITY.md) · [TESTING](docs/TESTING.md) · [SECURITY](SECURITY.md)
+[PARITY](docs/PARITY.md) · [ROADMAP](docs/ROADMAP.md) · [COMPATIBILITY](docs/COMPATIBILITY.md) · [TESTING](docs/TESTING.md) · [VALIDATION](docs/VALIDATION.md) · [SECURITY](SECURITY.md)
 
 ## License
 
