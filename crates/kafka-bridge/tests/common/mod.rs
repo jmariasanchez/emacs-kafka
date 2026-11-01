@@ -23,7 +23,10 @@ impl Bridge {
     }
 
     pub fn spawn_env(vars: &[(&str, &str)]) -> Self {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_kafka-bridge"))
+        // Allows a lane's tests to validate an already-built integration binary.
+        let binary = std::env::var_os("KAFKA_EL_TEST_BRIDGE")
+            .unwrap_or_else(|| env!("CARGO_BIN_EXE_kafka-bridge").into());
+        let mut child = Command::new(binary)
             .envs(vars.iter().copied())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

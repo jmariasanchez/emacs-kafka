@@ -9,7 +9,12 @@ fn setup(bootstrap: &str) -> (Bridge, String) {
         "kafka/connect",
         json!({"connectionId":"rw", "bootstrapServers":bootstrap, "timeoutMs":15000}),
     );
-    let topic = uniq("kel-txn");
+    static NEXT_TOPIC: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let topic = uniq(&format!(
+        "kel-txn-{}-{}",
+        std::process::id(),
+        NEXT_TOPIC.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
     bridge.ok(
         "kafka/topic/create",
         json!({"connectionId":"rw", "topic":topic, "partitions":1, "replicationFactor":1}),
@@ -311,4 +316,198 @@ async fn unfinished_core_transaction_aborts_on_drop() {
         2
     );
     cleanup(&mut bridge, &topic);
+}
+
+fn lifecycle_case(test: impl FnOnce(&mut Bridge, &mut Bridge, &str, &str)) {
+    let Some(bootstrap) = bootstrap() else { return };
+    let (mut subject, topic) = setup(&bootstrap);
+    let mut observer = Bridge::spawn();
+    observer.ok(
+        "kafka/connect",
+        json!({"connectionId":"rw", "bootstrapServers":bootstrap}),
+    );
+    // Clean up the unique test topic even when an intentional regression check fails.
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        test(&mut subject, &mut observer, &topic, &bootstrap);
+    }));
+    cleanup(&mut observer, &topic);
+    if let Err(panic) = result {
+        std::panic::resume_unwind(panic);
+    }
+}
+
+fn unfinished(bridge: &mut Bridge, connection: &str, topic: &str, value: &str) -> Value {
+    let txn = bridge.ok(
+        "kafka/txn/begin",
+        json!({
+            "connectionId":connection, "idleTimeoutMs":300000
+        }),
+    )["txnId"]
+        .clone();
+    bridge.ok(
+        "kafka/txn/produce",
+        json!({
+            "txnId":txn, "topic":topic, "partition":0, "value":value
+        }),
+    );
+    txn
+}
+
+fn assert_lifecycle_abort(observer: &mut Bridge, topic: &str, abandoned: &[&str]) {
+    observer.ok(
+        "kafka/produce",
+        json!({
+            "connectionId":"rw", "topic":topic, "partition":0, "value":"after-lifecycle"
+        }),
+    );
+    // An unclosed transaction also hides its records. A later sentinel becomes
+    // visible only after every preceding transaction releases the stable offset.
+    // Five seconds is well below the 300-second bridge idle cleanup fallback.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let result = observer.ok(
+            "kafka/records/fetch",
+            json!({
+                "connectionId":"rw", "topic":topic, "startPosition":{"type":"earliest"},
+                "isolationLevel":"read_committed", "limit":20, "timeoutMs":500
+            }),
+        );
+        let records = result["records"].as_array().unwrap();
+        if !records.is_empty() {
+            assert_eq!(
+                records.len(),
+                1,
+                "lifecycle cleanup committed abandoned records: {result}"
+            );
+            assert_eq!(records[0]["value"]["data"], "after-lifecycle");
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "lifecycle cleanup left an open transaction blocking the sentinel"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    let records = fetch(observer, topic, "read_uncommitted");
+    let values = records
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|record| record["value"]["data"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    let mut expected = abandoned.to_vec();
+    expected.push("after-lifecycle");
+    assert_eq!(
+        values, expected,
+        "aborted records must remain visible to uncommitted readers"
+    );
+}
+
+fn assert_clean_exit(bridge: &mut Bridge) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+    loop {
+        if let Some(status) = bridge.child.try_wait().unwrap() {
+            assert!(status.success(), "bridge failed to exit cleanly: {status}");
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "bridge did not exit after lifecycle cleanup"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+}
+
+#[test]
+fn lifecycle_disconnect_aborts_and_invalidates_session() {
+    lifecycle_case(|subject, observer, topic, bootstrap| {
+        let txn = unfinished(subject, "rw", topic, "abandoned-disconnect");
+        let disconnected = subject.ok("kafka/disconnect", json!({"connectionId":"rw"}));
+        assert_eq!(disconnected["disconnected"], true);
+        assert_eq!(
+            subject.call("kafka/txn/commit", json!({"txnId":txn}))["error"]["code"],
+            -32602
+        );
+        assert_eq!(
+            subject.call(
+                "kafka/txn/produce",
+                json!({
+                    "txnId":txn, "topic":topic, "value":"stale"
+                })
+            )["error"]["code"],
+            -32602
+        );
+        assert_lifecycle_abort(observer, topic, &["abandoned-disconnect"]);
+        subject.ok(
+            "kafka/connect",
+            json!({"connectionId":"rw", "bootstrapServers":bootstrap}),
+        );
+        let fresh = begin(subject);
+        assert_ne!(fresh, txn);
+        subject.ok("kafka/txn/abort", json!({"txnId":fresh}));
+    });
+}
+
+#[test]
+fn lifecycle_replacement_aborts_old_writable_session() {
+    lifecycle_case(|subject, observer, topic, bootstrap| {
+        let txn = unfinished(subject, "rw", topic, "abandoned-replacement");
+        subject.ok(
+            "kafka/connect",
+            json!({
+                "connectionId":"rw", "bootstrapServers":bootstrap, "readOnly":true
+            }),
+        );
+        assert_eq!(
+            subject.call("kafka/txn/commit", json!({"txnId":txn}))["error"]["code"],
+            -32602
+        );
+        assert_eq!(
+            subject.call(
+                "kafka/txn/produce",
+                json!({
+                    "txnId":txn, "topic":topic, "value":"stale"
+                })
+            )["error"]["code"],
+            -32602
+        );
+        assert_eq!(
+            subject.call("kafka/txn/begin", json!({"connectionId":"rw"}))["error"]["code"],
+            1002
+        );
+        assert_lifecycle_abort(observer, topic, &["abandoned-replacement"]);
+    });
+}
+
+#[test]
+fn lifecycle_shutdown_aborts_all_connections_before_exit() {
+    lifecycle_case(|subject, observer, topic, bootstrap| {
+        unfinished(subject, "rw", topic, "abandoned-first");
+        subject.ok(
+            "kafka/connect",
+            json!({"connectionId":"other", "bootstrapServers":bootstrap}),
+        );
+        unfinished(subject, "other", topic, "abandoned-second");
+        assert!(subject.ok("kafka/shutdown", json!({})).is_null());
+        assert_clean_exit(subject);
+        assert_lifecycle_abort(observer, topic, &["abandoned-first", "abandoned-second"]);
+    });
+}
+
+#[test]
+fn lifecycle_stdin_eof_aborts_before_exit() {
+    lifecycle_case(|subject, observer, topic, _bootstrap| {
+        unfinished(subject, "rw", topic, "abandoned-eof");
+        // Replace the harness's nonoptional stdin with a closed dummy pipe,
+        // dropping the real bridge stdin without sending a shutdown request.
+        let mut dummy = std::process::Command::new("true")
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let replacement = dummy.stdin.take().unwrap();
+        assert!(dummy.wait().unwrap().success());
+        drop(std::mem::replace(&mut subject.stdin, replacement));
+        assert_clean_exit(subject);
+        assert_lifecycle_abort(observer, topic, &["abandoned-eof"]);
+    });
 }
