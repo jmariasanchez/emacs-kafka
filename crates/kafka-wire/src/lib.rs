@@ -87,8 +87,25 @@ fn frame_length(length: i32) -> Result<usize> {
     Ok(length as usize)
 }
 
+fn validate_security_properties(config: &ConnectionConfig) -> Result<()> {
+    if config.properties.keys().any(|key| {
+        let key = key.to_ascii_lowercase();
+        key == "security.protocol" || key.starts_with("sasl.") || key.starts_with("ssl.")
+    }) {
+        bail!("unsupported security overrides in properties for native wire client; use explicit security fields")
+    }
+    Ok(())
+}
+
 impl Client {
     pub async fn bootstrap(config: &ConnectionConfig) -> Result<Self> {
+        validate_security_properties(config)?;
+        timeout(config.timeout, Self::bootstrap_inner(config))
+            .await
+            .map_err(|_| anyhow!("Kafka bootstrap timeout"))?
+    }
+
+    async fn bootstrap_inner(config: &ConnectionConfig) -> Result<Self> {
         let mut last = anyhow!("no bootstrap servers");
         for address in config
             .bootstrap_servers
@@ -96,7 +113,7 @@ impl Client {
             .map(str::trim)
             .filter(|a| !a.is_empty())
         {
-            match Self::connect(config, address).await {
+            match Self::connect_inner(config, address).await {
                 Ok(client) => return Ok(client),
                 Err(error) => last = error,
             }
@@ -105,6 +122,7 @@ impl Client {
     }
 
     pub async fn connect(config: &ConnectionConfig, address: &str) -> Result<Self> {
+        validate_security_properties(config)?;
         timeout(config.timeout, Self::connect_inner(config, address))
             .await
             .map_err(|_| anyhow!("Kafka connection timeout"))?
@@ -337,6 +355,77 @@ impl Client {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn security_overrides_rejected_without_network() {
+        for key in [
+            "security.protocol",
+            "sasl.mechanism",
+            "sasl.password",
+            "sasl.oauthbearer.config",
+            "ssl.ca.location",
+            "ssl.endpoint.identification.algorithm",
+            "SSL.KEY.PASSWORD",
+        ] {
+            let config = ConnectionConfig {
+                bootstrap_servers: "not-a-network-address".into(),
+                timeout: Duration::ZERO,
+                properties: BTreeMap::from([(key.into(), "secret-override-value".into())]),
+                ..Default::default()
+            };
+            for result in [
+                Client::bootstrap(&config).await,
+                Client::connect(&config, "not-a-network-address").await,
+            ] {
+                let message = result
+                    .err()
+                    .expect("security override must fail closed")
+                    .to_string();
+                assert!(
+                    message.contains("security overrides in properties"),
+                    "{message}"
+                );
+                assert!(!message.contains("secret-override-value"));
+            }
+        }
+        let config = ConnectionConfig {
+            properties: BTreeMap::from([("client.id".into(), "custom-client".into())]),
+            ..Default::default()
+        };
+        assert!(validate_security_properties(&config).is_ok());
+    }
+
+    #[tokio::test]
+    async fn bootstrap_timeout_covers_all_addresses() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap().to_string();
+        let server = tokio::spawn(async move {
+            let mut sockets = Vec::new();
+            loop {
+                let (socket, _) = listener.accept().await.unwrap();
+                // Accept TCP but never answer ApiVersions on any connection.
+                sockets.push(socket);
+            }
+        });
+        let config = ConnectionConfig {
+            bootstrap_servers: [address.as_str(); 3].join(","),
+            timeout: Duration::from_millis(200),
+            ..Default::default()
+        };
+        let start = tokio::time::Instant::now();
+        let result = Client::bootstrap(&config).await;
+        let elapsed = start.elapsed();
+        server.abort();
+        assert!(result
+            .err()
+            .expect("stalled bootstrap must time out")
+            .to_string()
+            .contains("timeout"));
+        assert!(
+            elapsed < Duration::from_millis(500),
+            "bootstrap consumed multiple timeout budgets: {elapsed:?}"
+        );
+    }
 
     fn test_client(socket: tokio::io::DuplexStream) -> Client {
         Client {
